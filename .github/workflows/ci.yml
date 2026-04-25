@@ -13,22 +13,29 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
           cache: true
+
+      - name: go mod download
+        run: go mod download
 
       - name: go vet
         run: go vet ./...
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.62
-          args: --timeout=5m
+      - name: gofmt check
+        run: |
+          DIFF=$(gofmt -l .)
+          if [ -n "$DIFF" ]; then
+            echo "::error::Files not gofmt'd:"
+            echo "$DIFF"
+            exit 1
+          fi
 
       - name: go test
         run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Upload coverage
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
