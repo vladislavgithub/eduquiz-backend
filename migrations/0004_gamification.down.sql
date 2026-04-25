@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS sm2_states;
+DROP TABLE IF EXISTS user_badges;
+DROP TABLE IF EXISTS badges;
+DROP TABLE IF EXISTS user_progress;
+DROP TABLE IF EXISTS xp_log;

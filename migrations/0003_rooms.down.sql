@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS answers;
+DROP TABLE IF EXISTS participants;
+DROP TABLE IF EXISTS rooms;
+DROP TYPE IF EXISTS room_status;
