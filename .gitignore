@@ -1,0 +1,36 @@
+# Go
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Data
+postgres_data/
+redis_data/
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+coverage.txt
+coverage.html
