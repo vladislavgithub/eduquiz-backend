@@ -684,18 +684,24 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 		return
 	}
 	type row struct {
-		ParticipantID string `json:"participant_id"`
-		Nickname      string `json:"nickname"`
-		TotalXP       int    `json:"total_xp"`
-		Correct       int    `json:"correct"`
-		Total         int    `json:"total"`
+		ParticipantID      string `json:"participant_id"`
+		Nickname           string `json:"nickname"`
+		TotalXP            int    `json:"total_xp"`
+		Correct            int    `json:"correct"`
+		Total              int    `json:"total"`
+		CurrentQuestionIdx int    `json:"current_question_idx"`
+		IsFinished         bool   `json:"is_finished"`
 	}
 	out := make([]row, 0, len(board))
 	for _, e := range board {
 		out = append(out, row{
-			ParticipantID: e.ParticipantID.String(),
-			Nickname:      e.Nickname,
-			TotalXP:       e.TotalXP, Correct: e.Correct, Total: e.Total,
+			ParticipantID:      e.ParticipantID.String(),
+			Nickname:           e.Nickname,
+			TotalXP:            e.TotalXP,
+			Correct:            e.Correct,
+			Total:              e.Total,
+			CurrentQuestionIdx: e.CurrentQuestionIdx,
+			IsFinished:         e.IsFinished,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
