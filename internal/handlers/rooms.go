@@ -256,6 +256,54 @@ func (h *RoomsHandler) StartRoom(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"current_question": toQuestionResp(q)})
 }
 
+// ReviewQuestion — POST /api/v1/rooms/:id/review.
+// Переводит комнату из active в review: рассылает событие
+// question.reviewed с правильным ответом всем участникам, чтобы UI
+// мог подсветить верный вариант и заблокировать ответ.
+//
+// Идемпотентен: если уже review/finished — отвечает 200 без изменений.
+// Это нужно потому, что вызов триггерит клиент по истечению таймера,
+// и одновременно может прийти от нескольких клиентов; мы не хотим 409.
+func (h *RoomsHandler) ReviewQuestion(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	room, err := h.rooms.GetByID(c.Request.Context(), roomID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+		return
+	}
+	if room.Status != "active" {
+		// Уже review/finished — ничего не делаем, отвечаем 200.
+		c.JSON(http.StatusOK, gin.H{"status": room.Status})
+		return
+	}
+	if room.CurrentQuestionID == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "no active question"})
+		return
+	}
+	q, err := h.questions.GetByID(c.Request.Context(), *room.CurrentQuestionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load question"})
+		return
+	}
+	// Переводим в review через FSM-guard.
+	if err := h.rooms.SetStatus(c.Request.Context(), room.ID, "active", "review"); err != nil &&
+		!errors.Is(err, repository.ErrInvalidStatus) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "set review"})
+		return
+	}
+	count, _ := h.answers.CountForQuestion(c.Request.Context(), room.ID, q.ID)
+	h.bcast.Broadcast(room.ID, "question.reviewed", gin.H{
+		"question_id":      q.ID.String(),
+		"correct":          q.Correct, // raw json.RawMessage уйдёт как есть
+		"answers_received": count,
+	})
+	h.bcast.Broadcast(room.ID, "room.state_changed", gin.H{"status": "review"})
+	c.JSON(http.StatusOK, gin.H{"status": "review"})
+}
+
 // NextQuestion — POST /api/v1/rooms/:id/next.
 // Если ещё есть вопросы — активирует следующий; иначе — finished.
 func (h *RoomsHandler) NextQuestion(c *gin.Context) {
@@ -448,6 +496,7 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher := authed.Group("/rooms", auth.RequireRole("teacher", "admin"))
 	teacher.POST("", h.CreateRoom)
 	teacher.POST("/:id/start", h.StartRoom)
+	teacher.POST("/:id/review", h.ReviewQuestion)
 	teacher.POST("/:id/next", h.NextQuestion)
 }
 
