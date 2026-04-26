@@ -50,8 +50,19 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	// Сборка зависимостей. Issuer и репозитории живут вместе с сервером
 	// (они stateless / держат указатели на pool).
 	usersRepo := repository.NewUsersRepo(deps.DB)
+	coursesRepo := repository.NewCoursesRepo(deps.DB)
+	questionsRepo := repository.NewQuestionsRepo(deps.DB)
+	roomsRepo := repository.NewRoomsRepo(deps.DB)
+	answersRepo := repository.NewAnswersRepo(deps.DB)
+
 	issuer := auth.NewIssuer(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
+
 	authHandler := handlers.NewAuthHandler(usersRepo, issuer)
+	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo)
+	roomsHandler := handlers.NewRoomsHandler(
+		roomsRepo, coursesRepo, questionsRepo, answersRepo, usersRepo,
+		handlers.NopBroadcaster(), // WS-хаб подключим следующим коммитом
+	)
 
 	api := r.Group("/api/v1")
 	api.GET("/", func(c *gin.Context) {
@@ -61,7 +72,8 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 		})
 	})
 	authHandler.Routes(api, issuer)
-	// TODO: подключить роуты courses, rooms, gamification, ws.
+	coursesHandler.Routes(api, issuer)
+	roomsHandler.Routes(api, issuer)
 
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
