@@ -38,12 +38,14 @@ type Room struct {
 
 // Participant — связь пользователя с комнатой.
 type Participant struct {
-	ID       uuid.UUID
-	RoomID   uuid.UUID
-	UserID   uuid.UUID
-	Nickname string
-	JoinedAt time.Time
-	LeftAt   *time.Time
+	ID                 uuid.UUID
+	RoomID             uuid.UUID
+	UserID             uuid.UUID
+	Nickname           string
+	JoinedAt           time.Time
+	LeftAt             *time.Time
+	CurrentQuestionIdx int        // в timer/race-режимах: какой вопрос сейчас у этого студента
+	FinishedAtSession  *time.Time // в solo-режимах: когда участник прошёл всю сессию
 }
 
 // Доменные ошибки.
@@ -190,7 +192,8 @@ func (r *RoomsRepo) AddParticipant(ctx context.Context, p *Participant) error {
 // ListParticipants возвращает всех (включая ушедших) участников комнаты.
 func (r *RoomsRepo) ListParticipants(ctx context.Context, roomID uuid.UUID) ([]Participant, error) {
 	const sql = `
-        SELECT id, room_id, user_id, nickname, joined_at, left_at
+        SELECT id, room_id, user_id, nickname, joined_at, left_at,
+               current_question_idx, finished_at_session
         FROM participants
         WHERE room_id = $1
         ORDER BY joined_at ASC`
@@ -203,7 +206,10 @@ func (r *RoomsRepo) ListParticipants(ctx context.Context, roomID uuid.UUID) ([]P
 	out := make([]Participant, 0, 16)
 	for rows.Next() {
 		var p Participant
-		if err := rows.Scan(&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt,
+			&p.CurrentQuestionIdx, &p.FinishedAtSession,
+		); err != nil {
 			return nil, fmt.Errorf("scan participant: %w", err)
 		}
 		out = append(out, p)
@@ -216,17 +222,52 @@ func (r *RoomsRepo) ListParticipants(ctx context.Context, roomID uuid.UUID) ([]P
 // парой (room, user), а в answers пишется participant_id.
 func (r *RoomsRepo) FindParticipant(ctx context.Context, roomID, userID uuid.UUID) (*Participant, error) {
 	const sql = `
-        SELECT id, room_id, user_id, nickname, joined_at, left_at
+        SELECT id, room_id, user_id, nickname, joined_at, left_at,
+               current_question_idx, finished_at_session
         FROM participants
         WHERE room_id = $1 AND user_id = $2`
 	var p Participant
-	err := r.pool.QueryRow(ctx, sql, roomID, userID).
-		Scan(&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt)
+	err := r.pool.QueryRow(ctx, sql, roomID, userID).Scan(
+		&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt,
+		&p.CurrentQuestionIdx, &p.FinishedAtSession,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("find participant: %w", err)
+	}
+	return &p, nil
+}
+
+// AdvanceParticipant двигает указатель студента на следующий вопрос
+// (current_question_idx += 1). Используется в timer/race-режимах
+// после submit'а ответа. Возвращает обновлённого участника.
+//
+// Если новый idx >= total — это «студент закончил», ставим
+// finished_at_session=now() и не двигаем дальше idx.
+func (r *RoomsRepo) AdvanceParticipant(ctx context.Context, participantID uuid.UUID, total int) (*Participant, error) {
+	const sql = `
+        UPDATE participants
+        SET current_question_idx = LEAST(current_question_idx + 1, $2),
+            finished_at_session  = CASE
+                WHEN current_question_idx + 1 >= $2 AND finished_at_session IS NULL
+                    THEN now()
+                ELSE finished_at_session
+            END
+        WHERE id = $1
+        RETURNING id, room_id, user_id, nickname, joined_at, left_at,
+                  current_question_idx, finished_at_session`
+	var p Participant
+	err := r.pool.QueryRow(ctx, sql, participantID, total).Scan(
+		&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt,
+		&p.CurrentQuestionIdx, &p.FinishedAtSession,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("advance participant: %w", err)
 	}
 	return &p, nil
 }

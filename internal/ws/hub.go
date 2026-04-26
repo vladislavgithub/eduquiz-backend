@@ -39,6 +39,7 @@ type Hub struct {
 
 type broadcastReq struct {
 	roomID  uuid.UUID
+	userID  *uuid.UUID // если nil — broadcast всем; если задан — только этому юзеру
 	payload []byte
 }
 
@@ -92,6 +93,10 @@ func (h *Hub) Run() {
 		case req := <-h.broadcast:
 			set := rooms[req.roomID]
 			for c := range set {
+				// Если задан userID — отправляем только этому юзеру.
+				if req.userID != nil && c.userID != *req.userID {
+					continue
+				}
 				select {
 				case c.send <- req.payload:
 				default:
@@ -118,6 +123,24 @@ func (h *Hub) Broadcast(roomID uuid.UUID, event string, payload any) {
 	case h.broadcast <- broadcastReq{roomID: roomID, payload: body}:
 	default:
 		h.logger.Warn("ws broadcast queue full", "room", roomID, "type", event)
+	}
+}
+
+// SendTo отправляет событие конкретному пользователю в комнате
+// (по userID claims). Используется в timer/race-режимах — когда
+// нужно сообщить «вот твой следующий вопрос» только одному студенту,
+// не транслируя всему классу.
+func (h *Hub) SendTo(roomID uuid.UUID, userID uuid.UUID, event string, payload any) {
+	body, err := json.Marshal(Event{Type: event, Payload: payload})
+	if err != nil {
+		h.logger.Error("ws marshal event", "err", err, "type", event)
+		return
+	}
+	uid := userID
+	select {
+	case h.broadcast <- broadcastReq{roomID: roomID, userID: &uid, payload: body}:
+	default:
+		h.logger.Warn("ws sendto queue full", "room", roomID, "user", userID, "type", event)
 	}
 }
 

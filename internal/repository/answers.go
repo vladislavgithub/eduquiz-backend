@@ -77,12 +77,14 @@ func (r *AnswersRepo) CountForQuestion(ctx context.Context, roomID, questionID u
 
 // LeaderboardEntry — строка таблицы лидеров по сумме XP в комнате.
 type LeaderboardEntry struct {
-	ParticipantID uuid.UUID
-	UserID        uuid.UUID
-	Nickname      string
-	TotalXP       int
-	Correct       int
-	Total         int
+	ParticipantID      uuid.UUID
+	UserID             uuid.UUID
+	Nickname           string
+	TotalXP            int
+	Correct            int
+	Total              int
+	CurrentQuestionIdx int  // в timer/race: на каком вопросе сейчас (для race-bar)
+	IsFinished         bool // прошёл ли всю сессию (solo-режимы)
 }
 
 // Leaderboard агрегирует результаты комнаты в порядке убывания XP.
@@ -91,11 +93,14 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
         SELECT p.id, p.user_id, p.nickname,
                COALESCE(SUM(a.awarded_xp), 0)::int                                AS xp,
                COALESCE(SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END), 0)::int    AS correct,
-               COALESCE(COUNT(a.id), 0)::int                                      AS total
+               COALESCE(COUNT(a.id), 0)::int                                      AS total,
+               p.current_question_idx,
+               (p.finished_at_session IS NOT NULL)                                AS finished
         FROM participants p
         LEFT JOIN answers a ON a.participant_id = p.id
         WHERE p.room_id = $1
-        GROUP BY p.id, p.user_id, p.nickname
+        GROUP BY p.id, p.user_id, p.nickname, p.current_question_idx,
+                 p.finished_at_session, p.joined_at
         ORDER BY xp DESC, p.joined_at ASC`
 	rows, err := r.pool.Query(ctx, sql, roomID)
 	if err != nil {
@@ -106,8 +111,11 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
 	out := make([]LeaderboardEntry, 0, 16)
 	for rows.Next() {
 		var e LeaderboardEntry
-		if err := rows.Scan(&e.ParticipantID, &e.UserID, &e.Nickname,
-			&e.TotalXP, &e.Correct, &e.Total); err != nil {
+		if err := rows.Scan(
+			&e.ParticipantID, &e.UserID, &e.Nickname,
+			&e.TotalXP, &e.Correct, &e.Total,
+			&e.CurrentQuestionIdx, &e.IsFinished,
+		); err != nil {
 			return nil, fmt.Errorf("scan leaderboard: %w", err)
 		}
 		out = append(out, e)
