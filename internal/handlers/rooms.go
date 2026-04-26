@@ -268,7 +268,15 @@ func (h *RoomsHandler) NextQuestion(c *gin.Context) {
 	asked := room.AskedQuestionIDs
 	next, found := pickNext(room.QuestionOrder, asked)
 	if !found {
-		_ = h.rooms.SetStatus(c.Request.Context(), room.ID, room.Status, "finished")
+		// SetStatus может вернуть ErrInvalidStatus, если кто-то уже
+		// перевёл комнату в finished параллельно. Это не ошибка для
+		// клиента — статус всё равно «finished». Реальные SQL-ошибки
+		// (потеря коннекта и т.п.) нужно отличать и возвращать 500.
+		if err := h.rooms.SetStatus(c.Request.Context(), room.ID, room.Status, "finished"); err != nil &&
+			!errors.Is(err, repository.ErrInvalidStatus) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "set status finished"})
+			return
+		}
 		h.bcast.Broadcast(room.ID, "room.state_changed", gin.H{"status": "finished"})
 		c.JSON(http.StatusOK, gin.H{"status": "finished"})
 		return

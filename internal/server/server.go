@@ -32,6 +32,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(corsMiddleware())
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -92,5 +93,29 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+}
+
+// corsMiddleware — разрешает запросы с любого origin'а. Для MVP
+// (Flutter Web на localhost:8089 → API на localhost:8088, плюс будущий
+// прод-домен) удобно «*»; в production режиме можно сузить через
+// ALLOWED_ORIGIN env. Без явных CORS-заголовков браузер режет
+// preflight OPTIONS и любой запрос с Authorization-хедером.
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		c.Header("Access-Control-Allow-Origin", origin)
+		c.Header("Vary", "Origin")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Header("Access-Control-Max-Age", "600")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
 	}
 }

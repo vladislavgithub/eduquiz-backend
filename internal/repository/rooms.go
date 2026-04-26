@@ -129,13 +129,18 @@ func (r *RoomsRepo) scanRoom(ctx context.Context, where string, arg any) (*Room,
 
 // SetStatus переводит комнату в новый статус и фиксирует временные метки.
 // from — ожидаемый текущий статус (для оптимистичной проверки FSM).
+//
+// Параметры $2/$3 явно кастуются в room_status: pgx передаёт строку
+// как text, а ENUM-сравнение без каста в PostgreSQL не находит совпадений
+// и UPDATE возвращает 0 rows. Без каста — баг: статус не меняется,
+// и комната «зависает» в active навечно.
 func (r *RoomsRepo) SetStatus(ctx context.Context, id uuid.UUID, from, to string) error {
 	const sql = `
         UPDATE rooms
-        SET status = $3,
-            started_at  = CASE WHEN $3 = 'active'   AND started_at IS NULL THEN now() ELSE started_at  END,
-            finished_at = CASE WHEN $3 = 'finished' AND finished_at IS NULL THEN now() ELSE finished_at END
-        WHERE id = $1 AND status = $2`
+        SET status      = $3::room_status,
+            started_at  = CASE WHEN $3::room_status = 'active'   AND started_at  IS NULL THEN now() ELSE started_at  END,
+            finished_at = CASE WHEN $3::room_status = 'finished' AND finished_at IS NULL THEN now() ELSE finished_at END
+        WHERE id = $1 AND status = $2::room_status`
 	tag, err := r.pool.Exec(ctx, sql, id, from, to)
 	if err != nil {
 		return fmt.Errorf("set room status: %w", err)
