@@ -16,6 +16,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -72,9 +73,11 @@ func NewRoomsHandler(
 // --- DTO ---
 
 type createRoomReq struct {
-	CourseID string `json:"course_id" binding:"required,uuid"`
-	BankID   string `json:"bank_id"   binding:"required,uuid"`
-	Title    string `json:"title"     binding:"required,min=1,max=200"`
+	CourseID    string `json:"course_id" binding:"required,uuid"`
+	BankID      string `json:"bank_id"   binding:"required,uuid"`
+	Title       string `json:"title"     binding:"required,min=1,max=200"`
+	Shuffle     bool   `json:"shuffle"`      // перетасовать порядок вопросов
+	AutoAdvance bool   `json:"auto_advance"` // авто-переход к следующему после review
 }
 
 type roomResp struct {
@@ -149,12 +152,26 @@ func (h *RoomsHandler) CreateRoom(c *gin.Context) {
 	for i := range qs {
 		order = append(order, qs[i].ID)
 	}
+	if req.Shuffle {
+		rand.Shuffle(len(order), func(i, j int) {
+			order[i], order[j] = order[j], order[i]
+		})
+	}
+
+	// Сохраняем настройки в room.settings (JSONB), чтобы клиент
+	// мог их прочитать через GetRoom и применить (auto_advance,
+	// shuffle и любые будущие).
+	settingsJSON, _ := json.Marshal(map[string]any{
+		"shuffle":      req.Shuffle,
+		"auto_advance": req.AutoAdvance,
+	})
 
 	room := &repository.Room{
 		CourseID:      courseID,
 		BankID:        bankID,
 		Title:         req.Title,
 		QuestionOrder: order,
+		Settings:      json.RawMessage(settingsJSON),
 	}
 	if err := h.rooms.Create(c.Request.Context(), room); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create room"})
