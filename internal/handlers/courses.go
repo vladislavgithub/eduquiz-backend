@@ -150,6 +150,66 @@ func (h *CoursesHandler) ListBanks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
+// UpdateQuestion — PATCH /api/v1/questions/:id.
+// Перезаписывает все поля вопроса. Доступ — teacher, владеющий
+// курсом, к которому привязан банк.
+func (h *CoursesHandler) UpdateQuestion(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid question id"})
+		return
+	}
+	var req questionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	q := &repository.Question{
+		ID:           id,
+		Kind:         req.Kind,
+		Text:         req.Text,
+		Options:      req.Options,
+		Correct:      req.Correct,
+		Difficulty:   req.Difficulty,
+		Topic:        req.Topic,
+		TimeLimitSec: req.TimeLimitSec,
+		Metadata:     req.Metadata,
+	}
+	if err := h.questions.Update(c.Request.Context(), q); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update question"})
+		return
+	}
+	// Возвращаем актуальную версию (с новым updated_at).
+	full, err := h.questions.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "reload question"})
+		return
+	}
+	c.JSON(http.StatusOK, toQuestionResp(full))
+}
+
+// DeleteQuestion — DELETE /api/v1/questions/:id.
+func (h *CoursesHandler) DeleteQuestion(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid question id"})
+		return
+	}
+	if err := h.questions.Delete(c.Request.Context(), id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete question"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // CreateQuestion — POST /api/v1/banks/:id/questions.
 // Доступ — teacher, владеющий курсом, к которому привязан банк.
 func (h *CoursesHandler) CreateQuestion(c *gin.Context) {
@@ -242,6 +302,10 @@ func (h *CoursesHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	b := teacher.Group("/banks")
 	b.GET("/:id/questions", h.ListQuestions)
 	b.POST("/:id/questions", h.CreateQuestion)
+
+	q := teacher.Group("/questions")
+	q.PATCH("/:id", h.UpdateQuestion)
+	q.DELETE("/:id", h.DeleteQuestion)
 }
 
 // --- mappers ---

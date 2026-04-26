@@ -86,6 +86,56 @@ func (r *QuestionsRepo) ListByBank(ctx context.Context, bankID uuid.UUID) ([]Que
 	return out, rows.Err()
 }
 
+// Update обновляет существующий вопрос. Перезаписывает все поля
+// (PATCH-семантика на уровне всего тела). Возвращает ErrNotFound,
+// если такого вопроса нет.
+func (r *QuestionsRepo) Update(ctx context.Context, q *Question) error {
+	const sql = `
+        UPDATE questions
+        SET kind = $2,
+            text = $3,
+            options = COALESCE($4, '[]'::jsonb),
+            correct = $5,
+            difficulty = $6,
+            topic = NULLIF($7, ''),
+            time_limit_sec = $8,
+            metadata = COALESCE($9, '{}'::jsonb),
+            updated_at = now()
+        WHERE id = $1
+        RETURNING updated_at`
+	if q.Difficulty == 0 {
+		q.Difficulty = 3
+	}
+	if q.TimeLimitSec == 0 {
+		q.TimeLimitSec = 30
+	}
+	err := r.pool.QueryRow(ctx, sql,
+		q.ID, q.Kind, q.Text,
+		nullableJSON(q.Options), nullableJSON(q.Correct),
+		q.Difficulty, q.Topic, q.TimeLimitSec,
+		nullableJSON(q.Metadata),
+	).Scan(&q.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("update question: %w", err)
+	}
+	return nil
+}
+
+// Delete удаляет вопрос. Возвращает ErrNotFound, если такого нет.
+func (r *QuestionsRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, "DELETE FROM questions WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("delete question: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetByID возвращает вопрос по uuid.
 func (r *QuestionsRepo) GetByID(ctx context.Context, id uuid.UUID) (*Question, error) {
 	const sql = `
