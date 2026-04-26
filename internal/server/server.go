@@ -2,14 +2,28 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vladislavgithub/eduquiz-backend/internal/auth"
 	"github.com/vladislavgithub/eduquiz-backend/internal/config"
+	"github.com/vladislavgithub/eduquiz-backend/internal/handlers"
+	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
 )
 
-func New(cfg *config.Config) *http.Server {
+// Deps — внешние зависимости сервера. Создаются в main и
+// прокидываются сюда: так server остаётся чистой проводкой
+// без знания о том, как именно открывается соединение.
+type Deps struct {
+	DB *pgxpool.Pool
+}
+
+// New собирает Gin-роутер, регистрирует все ручки и возвращает
+// настроенный *http.Server.
+func New(cfg *config.Config, deps Deps) *http.Server {
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -22,20 +36,32 @@ func New(cfg *config.Config) *http.Server {
 	})
 
 	r.GET("/readyz", func(c *gin.Context) {
-		// TODO: проверять postgres и redis подключения
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := deps.DB.Ping(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "not ready", "db": err.Error(),
+			})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
+	// Сборка зависимостей. Issuer и репозитории живут вместе с сервером
+	// (они stateless / держат указатели на pool).
+	usersRepo := repository.NewUsersRepo(deps.DB)
+	issuer := auth.NewIssuer(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
+	authHandler := handlers.NewAuthHandler(usersRepo, issuer)
+
 	api := r.Group("/api/v1")
-	{
-		api.GET("/", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"name":    "EduQuiz API",
-				"version": "0.1.0",
-			})
+	api.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"name":    "EduQuiz API",
+			"version": "0.1.0",
 		})
-		// TODO: подключить роуты auth, courses, rooms, gamification
-	}
+	})
+	authHandler.Routes(api, issuer)
+	// TODO: подключить роуты courses, rooms, gamification, ws.
 
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,

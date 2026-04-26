@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vladislavgithub/eduquiz-backend/internal/config"
+	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
 	"github.com/vladislavgithub/eduquiz-backend/internal/server"
 )
 
@@ -24,7 +25,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := server.New(cfg)
+	bootCtx, cancelBoot := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBoot()
+
+	pool, err := repository.NewPool(bootCtx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to connect to postgres", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+	slog.Info("postgres connected")
+
+	srv := server.New(cfg, server.Deps{DB: pool})
 
 	go func() {
 		slog.Info("api starting", "addr", cfg.HTTPAddr)
