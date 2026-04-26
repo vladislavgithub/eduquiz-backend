@@ -76,7 +76,7 @@ type createRoomReq struct {
 	CourseID    string `json:"course_id" binding:"required,uuid"`
 	BankID      string `json:"bank_id"   binding:"required,uuid"`
 	Title       string `json:"title"     binding:"required,min=1,max=200"`
-	Mode        string `json:"mode"      binding:"omitempty,oneof=classic autoTimer race"`
+	Mode        string `json:"mode"      binding:"omitempty,oneof=classic timer race"`
 	Shuffle     bool   `json:"shuffle"`      // перетасовать порядок вопросов
 	AutoAdvance bool   `json:"auto_advance"` // авто-переход к следующему после review
 }
