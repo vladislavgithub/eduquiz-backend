@@ -127,6 +127,51 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
+// Refresh обрабатывает POST /api/v1/auth/refresh.
+// Принимает refresh-токен, возвращает новую пару access+refresh.
+// Это «rotating refresh» — старый refresh не отзывается специально,
+// но клиент ОБЯЗАН перезаписать на новый: при истечении первого
+// остаётся только последний.
+type refreshReq struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	var req refreshReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	claims, err := h.issuer.Parse(req.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
+		return
+	}
+	if claims.Type != "refresh" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "wrong token type"})
+		return
+	}
+	// Подгружаем профиль — на случай если роль/имя изменились с момента
+	// выдачи токена (теоретически админ мог их править).
+	u, err := h.users.GetByID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+	pair, err := h.issuer.IssuePair(u.ID, u.Role)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "issue tokens"})
+		return
+	}
+	c.JSON(http.StatusOK, tokenResp{
+		AccessToken:  pair.Access,
+		RefreshToken: pair.Refresh,
+		User: userResp{
+			ID: u.ID.String(), Email: u.Email, FullName: u.FullName, Role: u.Role,
+		},
+	})
+}
+
 // Me обрабатывает GET /api/v1/auth/me — возвращает профиль владельца токена.
 func (h *AuthHandler) Me(c *gin.Context) {
 	uid, ok := auth.UserIDFromContext(c)
@@ -149,5 +194,6 @@ func (h *AuthHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	a := api.Group("/auth")
 	a.POST("/register", h.Register)
 	a.POST("/login", h.Login)
+	a.POST("/refresh", h.Refresh)
 	a.GET("/me", auth.RequireAuth(issuer), h.Me)
 }
