@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/vladislavgithub/eduquiz-backend/internal/config"
 	"github.com/vladislavgithub/eduquiz-backend/internal/handlers"
 	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
+	"github.com/vladislavgithub/eduquiz-backend/internal/ws"
 )
 
 // Deps — внешние зависимости сервера. Создаются в main и
@@ -57,11 +59,16 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 
 	issuer := auth.NewIssuer(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 
+	// WebSocket-хаб запускается фоновой горутиной; реализует Broadcaster.
+	hub := ws.NewHub(slog.Default())
+	go hub.Run()
+	wsHandler := ws.NewHandler(hub, issuer, roomsRepo, slog.Default())
+
 	authHandler := handlers.NewAuthHandler(usersRepo, issuer)
 	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo)
 	roomsHandler := handlers.NewRoomsHandler(
 		roomsRepo, coursesRepo, questionsRepo, answersRepo, usersRepo,
-		handlers.NopBroadcaster(), // WS-хаб подключим следующим коммитом
+		hub,
 	)
 
 	api := r.Group("/api/v1")
@@ -74,6 +81,9 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	authHandler.Routes(api, issuer)
 	coursesHandler.Routes(api, issuer)
 	roomsHandler.Routes(api, issuer)
+
+	// WebSocket вне /api/v1 — общепринятая практика для real-time.
+	r.GET("/ws/rooms/:id", wsHandler.ServeWS)
 
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
