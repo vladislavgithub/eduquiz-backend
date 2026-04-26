@@ -76,21 +76,23 @@ type createRoomReq struct {
 	CourseID    string `json:"course_id" binding:"required,uuid"`
 	BankID      string `json:"bank_id"   binding:"required,uuid"`
 	Title       string `json:"title"     binding:"required,min=1,max=200"`
+	Mode        string `json:"mode"      binding:"omitempty,oneof=classic autoTimer race"`
 	Shuffle     bool   `json:"shuffle"`      // перетасовать порядок вопросов
 	AutoAdvance bool   `json:"auto_advance"` // авто-переход к следующему после review
 }
 
 type roomResp struct {
-	ID                string   `json:"id"`
-	Code              string   `json:"code"`
-	Title             string   `json:"title"`
-	Status            string   `json:"status"`
-	CourseID          string   `json:"course_id"`
-	BankID            string   `json:"bank_id"`
-	CurrentQuestionID *string  `json:"current_question_id,omitempty"`
-	QuestionOrder     []string `json:"question_order"`
-	AskedCount        int      `json:"asked_count"`
-	TotalCount        int      `json:"total_count"`
+	ID                string          `json:"id"`
+	Code              string          `json:"code"`
+	Title             string          `json:"title"`
+	Status            string          `json:"status"`
+	CourseID          string          `json:"course_id"`
+	BankID            string          `json:"bank_id"`
+	CurrentQuestionID *string         `json:"current_question_id,omitempty"`
+	QuestionOrder     []string        `json:"question_order"`
+	AskedCount        int             `json:"asked_count"`
+	TotalCount        int             `json:"total_count"`
+	Settings          json.RawMessage `json:"settings,omitempty"`
 }
 
 type joinRoomReq struct {
@@ -159,9 +161,14 @@ func (h *RoomsHandler) CreateRoom(c *gin.Context) {
 	}
 
 	// Сохраняем настройки в room.settings (JSONB), чтобы клиент
-	// мог их прочитать через GetRoom и применить (auto_advance,
-	// shuffle и любые будущие).
+	// мог их прочитать через GetRoom и применить (mode, shuffle,
+	// auto_advance и любые будущие).
+	mode := req.Mode
+	if mode == "" {
+		mode = "classic"
+	}
 	settingsJSON, _ := json.Marshal(map[string]any{
+		"mode":         mode,
 		"shuffle":      req.Shuffle,
 		"auto_advance": req.AutoAdvance,
 	})
@@ -530,6 +537,7 @@ func toRoomResp(r *repository.Room) roomResp {
 		QuestionOrder: order,
 		AskedCount:    len(r.AskedQuestionIDs),
 		TotalCount:    len(r.QuestionOrder),
+		Settings:      r.Settings,
 	}
 	if r.CurrentQuestionID != nil {
 		s := r.CurrentQuestionID.String()
