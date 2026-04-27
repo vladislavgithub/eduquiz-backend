@@ -54,6 +54,8 @@ type RoomsHandler struct {
 	questions *repository.QuestionsRepo
 	answers   *repository.AnswersRepo
 	users     *repository.UsersRepo
+	gamif     *repository.GamificationRepo
+	sm2       *repository.SM2Repo
 	bcast     Broadcaster
 }
 
@@ -63,6 +65,8 @@ func NewRoomsHandler(
 	questions *repository.QuestionsRepo,
 	answers *repository.AnswersRepo,
 	users *repository.UsersRepo,
+	gamif *repository.GamificationRepo,
+	sm2 *repository.SM2Repo,
 	bcast Broadcaster,
 ) *RoomsHandler {
 	if bcast == nil {
@@ -70,7 +74,7 @@ func NewRoomsHandler(
 	}
 	return &RoomsHandler{
 		rooms: rooms, courses: courses, questions: questions, answers: answers,
-		users: users, bcast: bcast,
+		users: users, gamif: gamif, sm2: sm2, bcast: bcast,
 	}
 }
 
@@ -494,7 +498,20 @@ func (h *RoomsHandler) SubmitAnswer(c *gin.Context) {
 		"participant_id":   participant.ID.String(),
 		"answers_received": count,
 	})
-	c.JSON(http.StatusOK, submitAnswerResp{Correct: corrPtr, AwardedXP: xp})
+
+	// XP в журнал, прогресс, бейджи, SM-2 — побочные эффекты.
+	newBadges, _, _, _ := h.awardForAnswer(c, awardCtx{
+		UserID: uid, CourseID: room.CourseID, RoomID: roomID, QuestionID: qID,
+		XP: xp, Correct: correct, HasCorrect: ok,
+		ElapsedMs: elapsed, TimeLimitMs: q.TimeLimitSec * 1000,
+		Difficulty: q.Difficulty,
+		Finished:   false, // в classic нет понятия «закончил»
+	})
+	resp := gin.H{"correct": corrPtr, "awarded_xp": xp}
+	if len(newBadges) > 0 {
+		resp["new_badges"] = newBadges
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // Leaderboard — GET /api/v1/rooms/:id/leaderboard.
@@ -634,12 +651,24 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 		"finished":             advanced.FinishedAtSession != nil,
 	})
 
+	// Геймификация (XP-журнал, прогресс, бейджи, SM-2).
+	finished := advanced.FinishedAtSession != nil
+	newBadges, _, _, _ := h.awardForAnswer(c, awardCtx{
+		UserID: uid, CourseID: room.CourseID, RoomID: roomID, QuestionID: currentQID,
+		XP: xp, Correct: correct, HasCorrect: ok,
+		ElapsedMs: req.ElapsedMs, TimeLimitMs: q.TimeLimitSec * 1000,
+		Difficulty: q.Difficulty, Finished: finished,
+	})
+
 	resp := gin.H{
 		"correct":              corrPtr,
 		"awarded_xp":           xp,
 		"current_question_idx": advanced.CurrentQuestionIdx,
 		"total":                total,
 		"finished":             advanced.FinishedAtSession != nil,
+	}
+	if len(newBadges) > 0 {
+		resp["new_badges"] = newBadges
 	}
 	if advanced.FinishedAtSession == nil && advanced.CurrentQuestionIdx < total {
 		// Следующий вопрос — этому студенту.
@@ -789,4 +818,146 @@ func pickNext(order, asked []uuid.UUID) (uuid.UUID, bool) {
 		}
 	}
 	return uuid.Nil, false
+}
+
+// awardCtx — параметры начисления XP/бейджей/SM-2 за один ответ.
+type awardCtx struct {
+	UserID      uuid.UUID
+	CourseID    uuid.UUID
+	RoomID      uuid.UUID
+	QuestionID  uuid.UUID
+	XP          int
+	Correct     bool
+	HasCorrect  bool // true, если автопроверка возможна
+	ElapsedMs   int
+	TimeLimitMs int
+	Difficulty  int
+	// Finished=true когда это последний ответ участника в solo-режиме —
+	// триггерит бейдж «идеальный раунд» при correct == total.
+	Finished bool
+}
+
+// awardForAnswer — побочные эффекты ответа: XP в журнал, прогресс,
+// бейджи, SM-2 state. Возвращает список *новых* кодов бейджей и
+// сводку прогресса. Любые ошибки логируются, но не прерывают ответ —
+// это «non-critical path».
+func (h *RoomsHandler) awardForAnswer(c *gin.Context, a awardCtx) (newBadges []string, totalXP, level, streak int) {
+	if h.gamif == nil {
+		return nil, 0, 0, 0
+	}
+	ctx := c.Request.Context()
+
+	// 1. XP в журнал + прогресс (atomic upsert + xp_log insert).
+	// Считаем уровень в Go (LevelFromXP), передаём в SQL — там нет sqrt.
+	prev, _ := h.gamif.ListProgress(ctx, a.UserID)
+	prevTotal := 0
+	for _, p := range prev {
+		if p.CourseID == a.CourseID {
+			prevTotal = p.TotalXP
+			break
+		}
+	}
+	newTotal := prevTotal + a.XP
+	newLevel := services.LevelFromXP(newTotal)
+	progress, err := h.gamif.AddXP(ctx, a.UserID, a.CourseID, a.XP, newLevel, nil, "answer")
+	if err == nil {
+		totalXP = progress.TotalXP
+		level = progress.Level
+		streak = progress.StreakDays
+	}
+
+	// 2. Бейджи. Все ошибки игнорируем — побочный эффект.
+	tryAward := func(code string) {
+		ok, _ := h.gamif.AwardBadge(ctx, a.UserID, code, a.CourseID)
+		if ok {
+			newBadges = append(newBadges, code)
+		}
+	}
+	if a.HasCorrect && a.Correct {
+		// «Первый правильный»: до этого ответа — 0 правильных в курсе.
+		corrBefore, _ := h.gamif.CountCorrectInCourse(ctx, a.UserID, a.CourseID)
+		// CountCorrectInCourse уже учёл текущий ответ (он в БД), поэтому 1.
+		if corrBefore == 1 {
+			tryAward("first_correct")
+		}
+		// «Молниеносный»: правильно и < 1/3 от лимита.
+		if a.TimeLimitMs > 0 && a.ElapsedMs > 0 && a.ElapsedMs*3 < a.TimeLimitMs {
+			tryAward("quick_thinker")
+		}
+	}
+	if streak >= 3 {
+		tryAward("streak_3")
+	}
+	if streak >= 7 {
+		tryAward("streak_7")
+	}
+	if level >= 5 {
+		tryAward("level_5")
+	}
+	if level >= 10 {
+		tryAward("level_10")
+	}
+	if totalXP >= 1000 {
+		tryAward("xp_1000")
+	}
+	// «Идеальный раунд»: дочитал до конца (Finished=true) и в комнате
+	// все ответы правильные.
+	if a.Finished {
+		correct, total, _ := h.gamif.CountCorrectInRoom(ctx, a.UserID, a.RoomID)
+		if total > 0 && correct == total {
+			tryAward("perfect_round")
+		}
+	}
+
+	// 3. SM-2: q-score выводим из (correct, скорость).
+	if h.sm2 != nil && a.HasCorrect {
+		q := sm2QScore(a.Correct, a.ElapsedMs, a.TimeLimitMs)
+		st, err := h.sm2.Get(ctx, a.UserID, a.QuestionID)
+		var src services.Sm2State
+		if errors.Is(err, repository.ErrNotFound) {
+			src = services.NewSm2State()
+		} else if err == nil {
+			src = services.Sm2State{
+				EF: st.EF, IntervalDays: st.IntervalDays,
+				Repetitions: st.Repetitions, DueDate: st.DueDate,
+			}
+			if st.LastReviewedAt != nil {
+				src.LastReviewedAt = *st.LastReviewedAt
+			}
+		} else {
+			return
+		}
+		updated := services.Sm2Update(src, q, time.Now())
+		now := updated.LastReviewedAt
+		_ = h.sm2.Upsert(ctx, repository.SM2State{
+			UserID: a.UserID, QuestionID: a.QuestionID,
+			EF: updated.EF, IntervalDays: updated.IntervalDays,
+			Repetitions: updated.Repetitions, DueDate: updated.DueDate,
+			LastReviewedAt: &now,
+		})
+	}
+	return
+}
+
+// sm2QScore выводит q ∈ [0,5] из факта правильности и скорости ответа.
+//
+//	correct + ≤½T → 5; correct + ≤T → 4; correct + >T → 3;
+//	incorrect → 2 (если был известен правильный); таймаут → 1.
+func sm2QScore(correct bool, elapsedMs, timeLimitMs int) int {
+	if !correct {
+		if timeLimitMs > 0 && elapsedMs >= timeLimitMs {
+			return 1
+		}
+		return 2
+	}
+	if timeLimitMs <= 0 {
+		return 4
+	}
+	if elapsedMs*2 <= timeLimitMs {
+		return 5
+	}
+	if elapsedMs <= timeLimitMs {
+		return 4
+	}
+	return 3
 }

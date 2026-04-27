@@ -57,6 +57,8 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	questionsRepo := repository.NewQuestionsRepo(deps.DB)
 	roomsRepo := repository.NewRoomsRepo(deps.DB)
 	answersRepo := repository.NewAnswersRepo(deps.DB)
+	gamifRepo := repository.NewGamificationRepo(deps.DB)
+	sm2Repo := repository.NewSM2Repo(deps.DB)
 
 	issuer := auth.NewIssuer(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 
@@ -69,8 +71,10 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo)
 	roomsHandler := handlers.NewRoomsHandler(
 		roomsRepo, coursesRepo, questionsRepo, answersRepo, usersRepo,
+		gamifRepo, sm2Repo,
 		hub,
 	)
+	meHandler := handlers.NewMeHandler(gamifRepo, sm2Repo, coursesRepo, questionsRepo)
 
 	api := r.Group("/api/v1")
 	api.GET("/", func(c *gin.Context) {
@@ -82,6 +86,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	authHandler.Routes(api, issuer)
 	coursesHandler.Routes(api, issuer)
 	roomsHandler.Routes(api, issuer)
+	meHandler.Routes(api, issuer)
 
 	// WebSocket вне /api/v1 — общепринятая практика для real-time.
 	r.GET("/ws/rooms/:id", wsHandler.ServeWS)
