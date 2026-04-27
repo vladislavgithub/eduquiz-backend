@@ -109,6 +109,24 @@ func (r *CoursesRepo) InsertBank(ctx context.Context, b *QuestionBank) error {
 		Scan(&b.ID, &b.CreatedAt)
 }
 
+// GetBank возвращает банк по id или ErrNotFound.
+func (r *CoursesRepo) GetBank(ctx context.Context, id uuid.UUID) (*QuestionBank, error) {
+	const q = `
+        SELECT id, course_id, title, source, created_at
+        FROM question_banks
+        WHERE id = $1`
+	var b QuestionBank
+	err := r.pool.QueryRow(ctx, q, id).
+		Scan(&b.ID, &b.CourseID, &b.Title, &b.Source, &b.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get bank: %w", err)
+	}
+	return &b, nil
+}
+
 // ListBanksByCourse возвращает все банки курса.
 func (r *CoursesRepo) ListBanksByCourse(ctx context.Context, courseID uuid.UUID) ([]QuestionBank, error) {
 	const q = `

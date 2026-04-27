@@ -11,16 +11,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/vladislavgithub/eduquiz-backend/internal/auth"
 	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
+	"github.com/vladislavgithub/eduquiz-backend/internal/services"
 )
 
 // CoursesHandler инкапсулирует зависимости course-эндпоинтов.
 type CoursesHandler struct {
 	courses   *repository.CoursesRepo
 	questions *repository.QuestionsRepo
+	analytics *repository.AnalyticsRepo
 }
 
-func NewCoursesHandler(c *repository.CoursesRepo, q *repository.QuestionsRepo) *CoursesHandler {
-	return &CoursesHandler{courses: c, questions: q}
+func NewCoursesHandler(
+	c *repository.CoursesRepo,
+	q *repository.QuestionsRepo,
+	a *repository.AnalyticsRepo,
+) *CoursesHandler {
+	return &CoursesHandler{courses: c, questions: q, analytics: a}
 }
 
 // --- DTO ---
@@ -210,6 +216,107 @@ func (h *CoursesHandler) DeleteQuestion(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// BankAnalytics — GET /api/v1/banks/:id/analytics.
+// Возвращает психометрический отчёт: α Кронбаха, средний балл и
+// для каждого вопроса — p-value (трудность) и r_pb (дискриминация).
+// Доступ — teacher, владеющий курсом банка.
+func (h *CoursesHandler) BankAnalytics(c *gin.Context) {
+	bankID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank id"})
+		return
+	}
+	// Проверяем владение курсом через первый вопрос банка
+	// (банк всегда лежит в каком-то курсе teacher-а; здесь простой
+	// SELECT 1 и сравнение teacher_id, без отдельного метода).
+	uid, _ := auth.UserIDFromContext(c)
+	q, err := h.questions.ListByBank(c.Request.Context(), bankID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list questions"})
+		return
+	}
+	if len(q) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"respondents":           0,
+			"item_count":            0,
+			"cronbach_alpha":        0,
+			"alpha_interpretation":  "недостаточно данных",
+			"mean_score":            0,
+			"max_possible":          0,
+			"items":                 []any{},
+		})
+		return
+	}
+	// Защита: владение проверяем по одной из questions → bank → course.
+	// Для простоты: тянем bank через repo (CoursesRepo), сверяем teacher_id.
+	if !h.isBankOwnedBy(c, bankID, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
+		return
+	}
+
+	qIDs, _, matrix, err := h.analytics.BankResponseMatrix(c.Request.Context(), bankID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "analytics query"})
+		return
+	}
+	report := services.AnalyzeBank(matrix)
+
+	// Карта id вопроса → текст, чтобы фронт сразу мог отрисовать таблицу.
+	textByID := make(map[uuid.UUID]string, len(q))
+	for _, qq := range q {
+		textByID[qq.ID] = qq.Text
+	}
+
+	type itemDTO struct {
+		QuestionID     string  `json:"question_id"`
+		Text           string  `json:"text"`
+		PValue         float64 `json:"p_value"`
+		Discrimination float64 `json:"discrimination"`
+		Variance       float64 `json:"variance"`
+		AnsweredBy     int     `json:"answered_by"`
+	}
+	items := make([]itemDTO, 0, len(report.Items))
+	for i, st := range report.Items {
+		var qid uuid.UUID
+		if i < len(qIDs) {
+			qid = qIDs[i]
+		}
+		items = append(items, itemDTO{
+			QuestionID:     qid.String(),
+			Text:           textByID[qid],
+			PValue:         st.PValue,
+			Discrimination: st.Discrimination,
+			Variance:       st.Variance,
+			AnsweredBy:     st.AnsweredBy,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"respondents":          report.Respondents,
+		"item_count":           report.ItemCount,
+		"cronbach_alpha":       report.CronbachAlpha,
+		"alpha_interpretation": services.AlphaInterpretation(report.CronbachAlpha),
+		"mean_score":           report.MeanScore,
+		"max_possible":         report.MaxPossible,
+		"items":                items,
+	})
+}
+
+// isBankOwnedBy проверяет, что банк принадлежит teacher-у через цепочку
+// bank → course → teacher. Делается отдельным запросом, чтобы не тянуть
+// вопросы для проверки владения.
+func (h *CoursesHandler) isBankOwnedBy(c *gin.Context, bankID, teacherID uuid.UUID) bool {
+	bank, err := h.courses.GetBank(c.Request.Context(), bankID)
+	if err != nil {
+		return false
+	}
+	course, err := h.courses.GetByID(c.Request.Context(), bank.CourseID)
+	if err != nil {
+		return false
+	}
+	return course.TeacherID == teacherID
+}
+
 // CreateQuestion — POST /api/v1/banks/:id/questions.
 // Доступ — teacher, владеющий курсом, к которому привязан банк.
 func (h *CoursesHandler) CreateQuestion(c *gin.Context) {
@@ -302,6 +409,7 @@ func (h *CoursesHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	b := teacher.Group("/banks")
 	b.GET("/:id/questions", h.ListQuestions)
 	b.POST("/:id/questions", h.CreateQuestion)
+	b.GET("/:id/analytics", h.BankAnalytics)
 
 	q := teacher.Group("/questions")
 	q.PATCH("/:id", h.UpdateQuestion)

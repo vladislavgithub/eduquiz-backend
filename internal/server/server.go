@@ -59,6 +59,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	answersRepo := repository.NewAnswersRepo(deps.DB)
 	gamifRepo := repository.NewGamificationRepo(deps.DB)
 	sm2Repo := repository.NewSM2Repo(deps.DB)
+	analyticsRepo := repository.NewAnalyticsRepo(deps.DB)
 
 	issuer := auth.NewIssuer(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 
@@ -68,7 +69,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	wsHandler := ws.NewHandler(hub, issuer, roomsRepo, slog.Default())
 
 	authHandler := handlers.NewAuthHandler(usersRepo, issuer)
-	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo)
+	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo, analyticsRepo)
 	roomsHandler := handlers.NewRoomsHandler(
 		roomsRepo, coursesRepo, questionsRepo, answersRepo, usersRepo,
 		gamifRepo, sm2Repo,
