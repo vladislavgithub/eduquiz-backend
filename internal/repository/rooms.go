@@ -272,6 +272,33 @@ func (r *RoomsRepo) AdvanceParticipant(ctx context.Context, participantID uuid.U
 	return &p, nil
 }
 
+// ResetParticipant откатывает указатель студента в начало банка
+// (current_question_idx = 0). Используется в race-режиме при
+// неправильном ответе — Quizlet Live-style: ошибся → начинай заново.
+// Не сбрасывает finished_at_session — если студент уже финишировал,
+// сброс игнорируется (теоретически невозможно: после финиша он не
+// отвечает).
+func (r *RoomsRepo) ResetParticipant(ctx context.Context, participantID uuid.UUID) (*Participant, error) {
+	const sql = `
+        UPDATE participants
+        SET current_question_idx = 0
+        WHERE id = $1 AND finished_at_session IS NULL
+        RETURNING id, room_id, user_id, nickname, joined_at, left_at,
+                  current_question_idx, finished_at_session`
+	var p Participant
+	err := r.pool.QueryRow(ctx, sql, participantID).Scan(
+		&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt,
+		&p.CurrentQuestionIdx, &p.FinishedAtSession,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("reset participant: %w", err)
+	}
+	return &p, nil
+}
+
 // newRoomCode возвращает строку из 6 десятичных цифр '000000'..'999999'.
 // Используется crypto/rand, чтобы код было сложно угадать.
 func newRoomCode() (string, error) {

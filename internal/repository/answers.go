@@ -60,6 +60,15 @@ func (r *AnswersRepo) Insert(ctx context.Context, a *Answer) error {
 	return nil
 }
 
+// DeleteByParticipant удаляет все ответы участника в комнате.
+// Используется при reset в race-режиме, чтобы можно было пройти банк
+// заново без UNIQUE-конфликта на (room_id, question_id, participant_id).
+func (r *AnswersRepo) DeleteByParticipant(ctx context.Context, roomID, participantID uuid.UUID) error {
+	const sql = `DELETE FROM answers WHERE room_id = $1 AND participant_id = $2`
+	_, err := r.pool.Exec(ctx, sql, roomID, participantID)
+	return err
+}
+
 // CountForQuestion возвращает количество ответов на текущий вопрос
 // (для отображения «X из Y участников ответили» в реальном времени).
 func (r *AnswersRepo) CountForQuestion(ctx context.Context, roomID, questionID uuid.UUID) (int, error) {

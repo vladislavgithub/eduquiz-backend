@@ -87,6 +87,11 @@ type createRoomReq struct {
 	Mode        string `json:"mode"      binding:"omitempty,oneof=classic timer race"`
 	Shuffle     bool   `json:"shuffle"`      // перетасовать порядок вопросов
 	AutoAdvance bool   `json:"auto_advance"` // авто-переход к следующему после review
+	// PreviousRoomID — id предыдущей комнаты, в которой эти же студенты
+	// сидят. Если задан — на старую комнату уйдёт событие
+	// room.next_session с кодом новой, чтобы старые участники
+	// автоматически перешли без ручного ввода кода.
+	PreviousRoomID string `json:"previous_room_id" binding:"omitempty,uuid"`
 }
 
 type roomResp struct {
@@ -191,6 +196,19 @@ func (h *RoomsHandler) CreateRoom(c *gin.Context) {
 	if err := h.rooms.Create(c.Request.Context(), room); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create room"})
 		return
+	}
+	// Если новая комната — продолжение сессии (relaunch), уведомляем
+	// участников старой, чтобы они автоматом перешли без ручного ввода
+	// кода.
+	if req.PreviousRoomID != "" {
+		if prevID, perr := uuid.Parse(req.PreviousRoomID); perr == nil {
+			h.bcast.Broadcast(prevID, "room.next_session", gin.H{
+				"room_id": room.ID.String(),
+				"code":    room.Code,
+				"title":   room.Title,
+				"mode":    mode,
+			})
+		}
 	}
 	c.JSON(http.StatusCreated, toRoomResp(room))
 }
@@ -647,25 +665,37 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 	}
 	xp := services.XPAward(correct, q.Difficulty, req.ElapsedMs, q.TimeLimitSec*1000, services.DefaultXPParams())
 
-	a := &repository.Answer{
-		RoomID:        roomID,
-		QuestionID:    currentQID,
-		ParticipantID: participant.ID,
-		Value:         req.Value,
-		IsCorrect:     corrPtr,
-		ElapsedMs:     req.ElapsedMs,
-		AwardedXP:     xp,
-	}
-	if err := h.answers.Insert(c.Request.Context(), a); err != nil {
-		// Дубликат на этот же вопрос для участника — продолжаем
-		// двигать вперёд.
-		if !errors.Is(err, repository.ErrDuplicateAnswer) {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "save answer"})
-			return
-		}
-	}
+	// В race-режиме неправильный ответ откатывает студента в начало
+	// банка (Quizlet Live: ошибся — начинай заново). В timer-режиме
+	// ответ всегда двигает вперёд.
+	wrongInRace := mode == "race" && ok && !correct
 
-	advanced, err := h.rooms.AdvanceParticipant(c.Request.Context(), participant.ID, total)
+	var advanced *repository.Participant
+	if wrongInRace {
+		// Чистим прошлые ответы этого студента в комнате — иначе при
+		// повторном проходе вылетит UNIQUE-constraint. История попытки
+		// теряется, но XP-журнал и user_progress сохраняются.
+		_ = h.answers.DeleteByParticipant(c.Request.Context(), roomID, participant.ID)
+		advanced, err = h.rooms.ResetParticipant(c.Request.Context(), participant.ID)
+	} else {
+		// Сохраняем ответ. Дубликат — игнорируем (FSM защита).
+		a := &repository.Answer{
+			RoomID:        roomID,
+			QuestionID:    currentQID,
+			ParticipantID: participant.ID,
+			Value:         req.Value,
+			IsCorrect:     corrPtr,
+			ElapsedMs:     req.ElapsedMs,
+			AwardedXP:     xp,
+		}
+		if err := h.answers.Insert(c.Request.Context(), a); err != nil {
+			if !errors.Is(err, repository.ErrDuplicateAnswer) {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "save answer"})
+				return
+			}
+		}
+		advanced, err = h.rooms.AdvanceParticipant(c.Request.Context(), participant.ID, total)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "advance"})
 		return
@@ -676,6 +706,7 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 		"participant_id":       advanced.ID.String(),
 		"current_question_idx": advanced.CurrentQuestionIdx,
 		"finished":             advanced.FinishedAtSession != nil,
+		"reset":                wrongInRace,
 	})
 
 	// Геймификация (XP-журнал, прогресс, бейджи, SM-2).
@@ -693,6 +724,7 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 		"current_question_idx": advanced.CurrentQuestionIdx,
 		"total":                total,
 		"finished":             advanced.FinishedAtSession != nil,
+		"reset":                wrongInRace,
 	}
 	if len(newBadges) > 0 {
 		resp["new_badges"] = newBadges
