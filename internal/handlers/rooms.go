@@ -402,7 +402,7 @@ func (h *RoomsHandler) ReviewQuestion(c *gin.Context) {
 // Новый раунд внутри той же комнаты: студенты остаются на местах,
 // сессия сбрасывается (answers очищаются, participant.idx=0,
 // finished=NULL), опционально меняется банк/режим/перетасовка.
-// Препод потом дёргает /start, как обычно.
+// Преподаватель потом дёргает /start, как обычно.
 type restartRoomReq struct {
 	BankID      string `json:"bank_id"      binding:"omitempty,uuid"`
 	Mode        string `json:"mode"         binding:"omitempty,oneof=classic timer race"`
@@ -425,7 +425,7 @@ func (h *RoomsHandler) RestartRoom(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
 		return
 	}
-	// Запрещаем restart только если активная сессия — пусть препод
+	// Запрещаем restart только если активная сессия — пусть преподаватель
 	// сначала закончит её через /finish.
 	if room.Status == "active" || room.Status == "review" {
 		c.JSON(http.StatusConflict, gin.H{"error": "session is active, finish it first"})

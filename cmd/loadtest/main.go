@@ -157,7 +157,7 @@ func main() {
 	jwg.Wait()
 	log.Printf("joined: %d", len(joinedAll))
 
-	// 5. Препод стартует комнату.
+	// 5. Преподаватель стартует комнату.
 	if err := startRoom(teacherToken, roomID); err != nil {
 		log.Fatalf("start room: %v", err)
 	}
