@@ -32,6 +32,10 @@ const (
 	studentPassword = "student123"
 	studentName     = "Дворянкин Владислав"
 
+	student2Email    = "student2@eduquiz.ru"
+	student2Password = "student123"
+	student2Name     = "Иванов Иван"
+
 	courseTitle = "Надёжность технических систем"
 	courseDesc  = "Демо-курс по дисциплине «Надёжность» Волкова Д.А., " +
 		"кафедра АСУ РГУ нефти и газа им. Губкина."
@@ -74,6 +78,9 @@ func main() {
 	}
 	if _, err := upsertUser(ctx, pool, studentEmail, studentPassword, studentName, "student"); err != nil {
 		log.Fatalf("upsert student: %v", err)
+	}
+	if _, err := upsertUser(ctx, pool, student2Email, student2Password, student2Name, "student"); err != nil {
+		log.Fatalf("upsert student2: %v", err)
 	}
 
 	// Курс: дропаем существующий с тем же titles+teacher и пересоздаём.
@@ -125,8 +132,9 @@ func main() {
 	fmt.Fprintln(os.Stdout, "─────────────────────────────────────────────────────────")
 	fmt.Fprintln(os.Stdout, "Seed готов.")
 	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintf(os.Stdout, "  teacher: %s  /  %s\n", teacherEmail, teacherPassword)
-	fmt.Fprintf(os.Stdout, "  student: %s  /  %s\n", studentEmail, studentPassword)
+	fmt.Fprintf(os.Stdout, "  teacher:  %s  /  %s\n", teacherEmail, teacherPassword)
+	fmt.Fprintf(os.Stdout, "  student:  %s  /  %s\n", studentEmail, studentPassword)
+	fmt.Fprintf(os.Stdout, "  student2: %s  /  %s\n", student2Email, student2Password)
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintf(os.Stdout, "  курс: %s\n", courseTitle)
 	fmt.Fprintf(os.Stdout, "  банков: %d, вопросов: %d\n", len(bankIDs), len(allQuestions()))
