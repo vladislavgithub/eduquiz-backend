@@ -214,6 +214,9 @@ func (h *RoomsHandler) CreateRoom(c *gin.Context) {
 }
 
 // GetRoom — GET /api/v1/rooms/:id.
+// Доступ имеют: преподаватель-владелец курса комнаты, участник комнаты,
+// admin. Это закрывает horizontal-IDOR — нельзя по UUID комнаты узнать
+// её settings/question_order постороннему.
 func (h *RoomsHandler) GetRoom(c *gin.Context) {
 	roomID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -224,6 +227,24 @@ func (h *RoomsHandler) GetRoom(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
 		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	role, _ := auth.RoleFromContext(c)
+	if role != "admin" {
+		// Преподаватель-владелец курса?
+		course, cerr := h.courses.GetByID(c.Request.Context(), room.CourseID)
+		isOwner := cerr == nil && course.TeacherID == uid
+		// Или участник комнаты?
+		isParticipant := false
+		if !isOwner {
+			if _, perr := h.rooms.FindParticipant(c.Request.Context(), roomID, uid); perr == nil {
+				isParticipant = true
+			}
+		}
+		if !isOwner && !isParticipant {
+			c.JSON(http.StatusForbidden, gin.H{"error": "no access to this room"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, toRoomResp(room))
 }

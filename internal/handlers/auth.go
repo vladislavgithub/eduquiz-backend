@@ -51,6 +51,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Дополнительная проверка силы пароля поверх min/max из binding-тегов:
+	// требует букву + цифру, отсеивает блэклист (qwerty/password/...).
+	if err := auth.ValidatePasswordStrength(req.Password); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -190,10 +196,18 @@ func (h *AuthHandler) Me(c *gin.Context) {
 }
 
 // Routes регистрирует auth-эндпоинты под уже существующей группой /api/v1.
-func (h *AuthHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
+// publicLimiter ставится на /register, /login, /refresh — защита от
+// brute-force и DoS bcrypt. Если nil — лимит не применяется (dev/test).
+func (h *AuthHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer, publicLimiter ...gin.HandlerFunc) {
 	a := api.Group("/auth")
-	a.POST("/register", h.Register)
-	a.POST("/login", h.Login)
-	a.POST("/refresh", h.Refresh)
+	pub := a.Group("")
+	for _, mw := range publicLimiter {
+		if mw != nil {
+			pub.Use(mw)
+		}
+	}
+	pub.POST("/register", h.Register)
+	pub.POST("/login", h.Login)
+	pub.POST("/refresh", h.Refresh)
 	a.GET("/me", auth.RequireAuth(issuer), h.Me)
 }

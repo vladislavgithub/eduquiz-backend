@@ -234,6 +234,14 @@ func (h *MeHandler) AnswerSM2(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
 		return
 	}
+	// Доступ к SM-2 только для тех вопросов, к которым студент уже
+	// прикасался (есть запись в sm2_states от прошлой сессии).
+	// Защищает от того, что любой залогиненный пользователь по UUID
+	// чужого вопроса заведёт себе sm2_state и таскает его в /me/sm2/due.
+	if _, sErr := h.sm2.Get(c.Request.Context(), uid, qID); sErr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "no access to this question"})
+		return
+	}
 	correct, ok := services.CheckAnswer(q.Kind, q.Correct, req.Value)
 	var corrPtr *bool
 	if ok {

@@ -165,6 +165,11 @@ func (h *CoursesHandler) UpdateQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid question id"})
 		return
 	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isQuestionOwnedBy(c, id, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your question"})
+		return
+	}
 	var req questionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -203,6 +208,11 @@ func (h *CoursesHandler) DeleteQuestion(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid question id"})
+		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isQuestionOwnedBy(c, id, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your question"})
 		return
 	}
 	if err := h.questions.Delete(c.Request.Context(), id); err != nil {
@@ -302,6 +312,16 @@ func (h *CoursesHandler) BankAnalytics(c *gin.Context) {
 	})
 }
 
+// isQuestionOwnedBy — то же самое, но для конкретного вопроса.
+// Цепочка question → bank → course → teacher.
+func (h *CoursesHandler) isQuestionOwnedBy(c *gin.Context, questionID, teacherID uuid.UUID) bool {
+	q, err := h.questions.GetByID(c.Request.Context(), questionID)
+	if err != nil {
+		return false
+	}
+	return h.isBankOwnedBy(c, q.BankID, teacherID)
+}
+
 // isBankOwnedBy проверяет, что банк принадлежит teacher-у через цепочку
 // bank → course → teacher. Делается отдельным запросом, чтобы не тянуть
 // вопросы для проверки владения.
@@ -323,6 +343,11 @@ func (h *CoursesHandler) CreateQuestion(c *gin.Context) {
 	bankID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank id"})
+		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isBankOwnedBy(c, bankID, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
 		return
 	}
 	var req questionReq
@@ -355,6 +380,11 @@ func (h *CoursesHandler) ListQuestions(c *gin.Context) {
 	bankID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank id"})
+		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isBankOwnedBy(c, bankID, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
 		return
 	}
 	list, err := h.questions.ListByBank(c.Request.Context(), bankID)

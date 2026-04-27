@@ -78,6 +78,16 @@ func UserIDFromContext(c *gin.Context) (uuid.UUID, bool) {
 	return claims.UserID, true
 }
 
+// RoleFromContext возвращает роль ('teacher'/'student'/'admin')
+// авторизованного пользователя.
+func RoleFromContext(c *gin.Context) (string, bool) {
+	claims, ok := FromContext(c)
+	if !ok {
+		return "", false
+	}
+	return claims.Role, true
+}
+
 func extractBearer(header string) string {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {

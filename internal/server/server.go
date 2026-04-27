@@ -67,7 +67,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	// WebSocket-хаб запускается фоновой горутиной; реализует Broadcaster.
 	hub := ws.NewHub(slog.Default())
 	go hub.Run()
-	wsHandler := ws.NewHandler(hub, issuer, roomsRepo, slog.Default())
+	wsHandler := ws.NewHandler(hub, issuer, roomsRepo, coursesRepo, slog.Default())
 
 	authHandler := handlers.NewAuthHandler(usersRepo, issuer)
 	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo, analyticsRepo)
@@ -79,13 +79,22 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	meHandler := handlers.NewMeHandler(gamifRepo, sm2Repo, coursesRepo, questionsRepo)
 
 	api := r.Group("/api/v1")
+	// Body size cap: 1 MiB на любой запрос. Защищает от мегабайтных
+	// JSON в /banks/:id/questions и от DoS большим телом запроса.
+	api.Use(bodySizeMiddleware(1 << 20))
+
 	api.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"name":    "EduQuiz API",
 			"version": "0.1.0",
 		})
 	})
-	authHandler.Routes(api, issuer)
+	// Rate-limit на /auth/* для защиты от brute-force и DoS bcrypt:
+	// register cost 12 ≈ 250 мс CPU, без лимита одна горутина положит api.
+	// 20 запросов в минуту с burst до 10 — нормально для людей,
+	// неприемлемо для perebor'а.
+	authLimiter := rateLimitMiddleware(20, 10)
+	authHandler.Routes(api, issuer, authLimiter)
 	coursesHandler.Routes(api, issuer)
 	roomsHandler.Routes(api, issuer)
 	meHandler.Routes(api, issuer)
@@ -100,6 +109,16 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+}
+
+// bodySizeMiddleware ограничивает размер тела запроса, чтобы предотвратить
+// мегабайтные JSON-боди в /banks/:id/questions и подобные эндпоинты.
+// На превышении возвращает 413 Payload Too Large.
+func bodySizeMiddleware(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
 	}
 }
 

@@ -16,17 +16,18 @@ import (
 
 // Handler — фабрика gin-хендлера WS.
 type Handler struct {
-	hub    *Hub
-	issuer *auth.Issuer
-	rooms  *repository.RoomsRepo
-	logger *slog.Logger
+	hub     *Hub
+	issuer  *auth.Issuer
+	rooms   *repository.RoomsRepo
+	courses *repository.CoursesRepo
+	logger  *slog.Logger
 }
 
-func NewHandler(hub *Hub, issuer *auth.Issuer, rooms *repository.RoomsRepo, logger *slog.Logger) *Handler {
+func NewHandler(hub *Hub, issuer *auth.Issuer, rooms *repository.RoomsRepo, courses *repository.CoursesRepo, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{hub: hub, issuer: issuer, rooms: rooms, logger: logger}
+	return &Handler{hub: hub, issuer: issuer, rooms: rooms, courses: courses, logger: logger}
 }
 
 // ServeWS — GET /ws/rooms/:id?token=<access-jwt>.
@@ -71,17 +72,24 @@ func (h *Handler) ServeWS(c *gin.Context) {
 	go client.serve()
 }
 
-// canJoin: teacher может слушать любую свою комнату, любой другой
-// должен быть зарегистрированным participant'ом.
+// canJoin: teacher допускается ТОЛЬКО если он владелец курса
+// комнаты; любой другой должен быть зарегистрированным participant'ом.
+// Это закрывает утечку «question.reviewed» с правильными ответами
+// чужому teacher'у через UUID комнаты.
 func (h *Handler) canJoin(ctx context.Context, roomID uuid.UUID, claims *auth.Claims) bool {
 	if claims.Role == "admin" {
 		return true
 	}
 	if claims.Role == "teacher" {
-		// Учитель допускается, если он владелец курса этой комнаты.
-		// Делать второй запрос лень — пока разрешаем всем teacher'ам;
-		// REST-эндпоинты управления комнатой всё равно проверяют ownership.
-		return true
+		room, err := h.rooms.GetByID(ctx, roomID)
+		if err != nil {
+			return false
+		}
+		course, err := h.courses.GetByID(ctx, room.CourseID)
+		if err != nil {
+			return false
+		}
+		return course.TeacherID == claims.UserID
 	}
 	_, err := h.rooms.FindParticipant(ctx, roomID, claims.UserID)
 	return err == nil
