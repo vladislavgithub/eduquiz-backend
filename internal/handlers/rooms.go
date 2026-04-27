@@ -380,6 +380,33 @@ func (h *RoomsHandler) ReviewQuestion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "review"})
 }
 
+// FinishRoom — POST /api/v1/rooms/:id/finish.
+// Принудительно переводит комнату в finished. Идемпотентен — повторный
+// вызов на уже finished-комнате вернёт 200. Нужен преподавателю для
+// досрочного завершения (например, в solo-режимах если кто-то завис).
+func (h *RoomsHandler) FinishRoom(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	room, err := h.rooms.GetByID(c.Request.Context(), roomID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+		return
+	}
+	if room.Status == "finished" {
+		c.JSON(http.StatusOK, gin.H{"status": "finished"})
+		return
+	}
+	if err := h.rooms.SetStatus(c.Request.Context(), room.ID, room.Status, "finished"); err != nil &&
+		!errors.Is(err, repository.ErrInvalidStatus) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "set finished"})
+		return
+	}
+	h.bcast.Broadcast(room.ID, "room.state_changed", gin.H{"status": "finished"})
+	c.JSON(http.StatusOK, gin.H{"status": "finished"})
+}
+
 // NextQuestion — POST /api/v1/rooms/:id/next.
 // Если ещё есть вопросы — активирует следующий; иначе — finished.
 func (h *RoomsHandler) NextQuestion(c *gin.Context) {
@@ -782,6 +809,7 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher.POST("/:id/start", h.StartRoom)
 	teacher.POST("/:id/review", h.ReviewQuestion)
 	teacher.POST("/:id/next", h.NextQuestion)
+	teacher.POST("/:id/finish", h.FinishRoom)
 }
 
 // --- helpers ---
