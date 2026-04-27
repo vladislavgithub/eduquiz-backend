@@ -18,8 +18,13 @@ go.work.sum
 # Env / secrets
 .env
 .env.local
+.env.prod
 *.pem
 *.key
+
+# Flutter Web bundle (заливается отдельно, см. docs/DEPLOY.md)
+/web/*
+!/web/.gitkeep
 
 # Data
 postgres_data/

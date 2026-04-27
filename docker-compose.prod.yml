@@ -1,0 +1,107 @@
+## Production stack для EduQuiz: postgres + redis + api + caddy.
+## Запуск: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+## Все секреты — в .env.prod (см. .env.prod.example).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-eduquiz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-eduquiz}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eduquiz} -d ${POSTGRES_DB:-eduquiz}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - eduquiz_internal
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - eduquiz_internal
+
+  # Одноразовый запуск миграций. Использует образ golang-migrate/migrate.
+  # После успешного выполнения контейнер завершится; api стартует следом.
+  migrate:
+    image: migrate/migrate:v4.17.1
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-eduquiz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-eduquiz}?sslmode=disable"
+      - "up"
+    networks:
+      - eduquiz_internal
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/vladislavgithub/eduquiz-api:latest}
+    # Альтернатива: собрать локально из исходников (раскомментировать build:, закомментировать image:).
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-eduquiz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-eduquiz}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      ENV: ${ENV:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - eduquiz_internal
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro          # Flutter web bundle (см. docs/DEPLOY.md)
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    networks:
+      - eduquiz_internal
+
+volumes:
+  pg_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  eduquiz_internal:
+    driver: bridge

@@ -1,0 +1,63 @@
+# Caddyfile для production-стека EduQuiz.
+# Auto-TLS via Let's Encrypt. Домен берётся из переменной окружения DOMAIN.
+#
+# Маршрутизация:
+#   /api/*    → api:8080  (REST)
+#   /ws/*     → api:8080  (WebSocket)
+#   /healthz, /readyz → api:8080  (служебные)
+#   /*        → /srv/web  (Flutter Web SPA, fallback на index.html)
+
+{
+	# Глобальные опции
+	email admin@{$DOMAIN}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Безопасность по умолчанию
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		# Удалить серверный баннер
+		-Server
+	}
+
+	# WebSocket-эндпоинты (real-time комнаты)
+	@ws {
+		path /ws /ws/*
+	}
+	reverse_proxy @ws api:8080
+
+	# REST API
+	handle_path /api/* {
+		reverse_proxy api:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Health-эндпоинты (для мониторинга/uptime-чеков)
+	@health {
+		path /healthz /readyz
+	}
+	reverse_proxy @health api:8080
+
+	# Flutter Web SPA: статика + клиентский роутинг.
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

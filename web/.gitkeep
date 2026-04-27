@@ -1,0 +1,3 @@
+# Сюда копируется собранный Flutter Web bundle (build/web/*).
+# Содержимое в git не попадает (см. .gitignore: /web/), но сама директория
+# нужна Caddy для bind-mount /srv/web.
