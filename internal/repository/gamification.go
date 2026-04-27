@@ -160,7 +160,7 @@ func (r *GamificationRepo) XPHistogramByDay(
 		SELECT to_char(created_at, 'YYYY-MM-DD') AS day, SUM(delta)::int
 		FROM xp_log
 		WHERE user_id = $1 AND course_id = $2
-		  AND created_at >= now() - ($3 || ' days')::interval
+		  AND created_at >= now() - make_interval(days => $3::int)
 		GROUP BY day ORDER BY day`
 	rows, err := r.pool.Query(ctx, sql, userID, courseID, days)
 	if err != nil {
