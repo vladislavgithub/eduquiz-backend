@@ -1,4 +1,4 @@
-.PHONY: help dev up down logs build test fmt vet tidy ps psql redis-cli
+.PHONY: help dev up down logs build test fmt vet tidy ps psql redis-cli seed
 
 help:
 	@echo "Полезные команды для разработки EduQuiz backend"
@@ -13,6 +13,7 @@ help:
 	@echo "  make vet      — go vet ./..."
 	@echo "  make tidy     — go mod tidy"
 	@echo "  make psql     — открыть psql внутри контейнера"
+	@echo "  make seed     — залить демо-учётки (teacher/student) и банк вопросов по надёжности"
 
 dev:
 	docker compose up -d postgres redis
@@ -53,3 +54,6 @@ psql:
 
 redis-cli:
 	docker compose exec redis redis-cli
+
+seed:
+	go run ./cmd/seed
