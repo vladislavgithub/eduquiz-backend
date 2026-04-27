@@ -136,12 +136,12 @@ func (h *MeHandler) CourseProgress(c *gin.Context) {
 	}
 	if found == nil {
 		c.JSON(http.StatusOK, gin.H{
-			"course_id":    cid.String(),
-			"total_xp":     0,
-			"level":        0,
-			"streak_days":  0,
-			"xp_by_day":    map[string]int{},
-			"xp_to_next":   100, // следующий уровень требует ≥100 XP
+			"course_id":   cid.String(),
+			"total_xp":    0,
+			"level":       0,
+			"streak_days": 0,
+			"xp_by_day":   map[string]int{},
+			"xp_to_next":  100, // следующий уровень требует ≥100 XP
 		})
 		return
 	}
@@ -155,12 +155,12 @@ func (h *MeHandler) CourseProgress(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"course_id":    cid.String(),
-		"total_xp":     found.TotalXP,
-		"level":        found.Level,
-		"streak_days":  found.StreakDays,
-		"xp_by_day":    hist,
-		"xp_to_next":   xpToNext,
+		"course_id":     cid.String(),
+		"total_xp":      found.TotalXP,
+		"level":         found.Level,
+		"streak_days":   found.StreakDays,
+		"xp_by_day":     hist,
+		"xp_to_next":    xpToNext,
 		"next_level_xp": nextLevelXP,
 	})
 }

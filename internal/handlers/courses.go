@@ -237,13 +237,13 @@ func (h *CoursesHandler) BankAnalytics(c *gin.Context) {
 	}
 	if len(q) == 0 {
 		c.JSON(http.StatusOK, gin.H{
-			"respondents":           0,
-			"item_count":            0,
-			"cronbach_alpha":        0,
-			"alpha_interpretation":  "недостаточно данных",
-			"mean_score":            0,
-			"max_possible":          0,
-			"items":                 []any{},
+			"respondents":          0,
+			"item_count":           0,
+			"cronbach_alpha":       0,
+			"alpha_interpretation": "недостаточно данных",
+			"mean_score":           0,
+			"max_possible":         0,
+			"items":                []any{},
 		})
 		return
 	}

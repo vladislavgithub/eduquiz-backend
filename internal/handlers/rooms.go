@@ -41,8 +41,8 @@ type Broadcaster interface {
 // REST-эндпоинты остаются работоспособными, события просто не уйдут.
 type nopBroadcaster struct{}
 
-func (nopBroadcaster) Broadcast(uuid.UUID, string, any)              {}
-func (nopBroadcaster) SendTo(uuid.UUID, uuid.UUID, string, any)      {}
+func (nopBroadcaster) Broadcast(uuid.UUID, string, any)         {}
+func (nopBroadcaster) SendTo(uuid.UUID, uuid.UUID, string, any) {}
 
 // NopBroadcaster возвращает заглушку.
 func NopBroadcaster() Broadcaster { return nopBroadcaster{} }
