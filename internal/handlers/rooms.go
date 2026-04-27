@@ -398,6 +398,124 @@ func (h *RoomsHandler) ReviewQuestion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "review"})
 }
 
+// RestartRoom — POST /api/v1/rooms/:id/restart.
+// Новый раунд внутри той же комнаты: студенты остаются на местах,
+// сессия сбрасывается (answers очищаются, participant.idx=0,
+// finished=NULL), опционально меняется банк/режим/перетасовка.
+// Препод потом дёргает /start, как обычно.
+type restartRoomReq struct {
+	BankID      string `json:"bank_id"      binding:"omitempty,uuid"`
+	Mode        string `json:"mode"         binding:"omitempty,oneof=classic timer race"`
+	Shuffle     *bool  `json:"shuffle"      binding:"omitempty"`
+	AutoAdvance *bool  `json:"auto_advance" binding:"omitempty"`
+}
+
+func (h *RoomsHandler) RestartRoom(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	var req restartRoomReq
+	// Body опционален — пустой restart значит «прогнать тот же
+	// банк ещё раз с прежним режимом».
+	_ = c.ShouldBindJSON(&req)
+
+	room, err := h.rooms.GetByID(c.Request.Context(), roomID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+		return
+	}
+	// Запрещаем restart только если активная сессия — пусть препод
+	// сначала закончит её через /finish.
+	if room.Status == "active" || room.Status == "review" {
+		c.JSON(http.StatusConflict, gin.H{"error": "session is active, finish it first"})
+		return
+	}
+
+	// Решаем, какой банк используем (тот же или новый).
+	bankID := room.BankID
+	if req.BankID != "" {
+		newBank, perr := uuid.Parse(req.BankID)
+		if perr == nil {
+			bankID = newBank
+		}
+	}
+
+	// Тянем новые вопросы.
+	qs, err := h.questions.ListByBank(c.Request.Context(), bankID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list questions"})
+		return
+	}
+	if len(qs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bank is empty"})
+		return
+	}
+	order := make([]uuid.UUID, 0, len(qs))
+	for i := range qs {
+		order = append(order, qs[i].ID)
+	}
+
+	// Решаем настройки.
+	prev := map[string]any{}
+	if len(room.Settings) > 0 {
+		_ = json.Unmarshal(room.Settings, &prev)
+	}
+	mode := req.Mode
+	if mode == "" {
+		mode = readMode(room.Settings)
+		if mode == "" {
+			mode = "classic"
+		}
+	}
+	shuffle := false
+	if v, ok := prev["shuffle"].(bool); ok {
+		shuffle = v
+	}
+	if req.Shuffle != nil {
+		shuffle = *req.Shuffle
+	}
+	if shuffle {
+		rand.Shuffle(len(order), func(i, j int) {
+			order[i], order[j] = order[j], order[i]
+		})
+	}
+	autoAdvance := false
+	if v, ok := prev["auto_advance"].(bool); ok {
+		autoAdvance = v
+	}
+	if req.AutoAdvance != nil {
+		autoAdvance = *req.AutoAdvance
+	}
+	settingsJSON, _ := json.Marshal(map[string]any{
+		"mode":         mode,
+		"shuffle":      shuffle,
+		"auto_advance": autoAdvance,
+	})
+
+	if err := h.rooms.RestartRoom(c.Request.Context(), roomID, bankID, order, settingsJSON); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "restart"})
+		return
+	}
+
+	// Уведомляем участников. Они в _onEvent перезагрузят room+state.
+	h.bcast.Broadcast(roomID, "room.restarted", gin.H{
+		"bank_id":     bankID.String(),
+		"mode":        mode,
+		"total_count": len(order),
+	})
+	// И room.state_changed на всякий случай — у preподавателя обновится UI.
+	h.bcast.Broadcast(roomID, "room.state_changed", gin.H{"status": "waiting"})
+
+	// Возвращаем обновлённую комнату.
+	fresh, _ := h.rooms.GetByID(c.Request.Context(), roomID)
+	if fresh != nil {
+		c.JSON(http.StatusOK, toRoomResp(fresh))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "waiting"})
+}
+
 // FinishRoom — POST /api/v1/rooms/:id/finish.
 // Принудительно переводит комнату в finished. Идемпотентен — повторный
 // вызов на уже finished-комнате вернёт 200. Нужен преподавателю для
@@ -842,6 +960,7 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher.POST("/:id/review", h.ReviewQuestion)
 	teacher.POST("/:id/next", h.NextQuestion)
 	teacher.POST("/:id/finish", h.FinishRoom)
+	teacher.POST("/:id/restart", h.RestartRoom)
 }
 
 // --- helpers ---

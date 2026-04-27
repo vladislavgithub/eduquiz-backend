@@ -170,6 +170,56 @@ func (r *RoomsRepo) SetCurrentQuestion(ctx context.Context, id uuid.UUID, qID uu
 	return nil
 }
 
+// RestartRoom — комплексный апдейт «новый раунд внутри той же комнаты».
+// Применяется когда preподаватель хочет повторно прогнать тест с теми
+// же студентами, но возможно другим банком/режимом. Делает в одной
+// транзакции:
+//
+//   - DELETE FROM answers WHERE room_id;
+//   - UPDATE participants SET current_question_idx=0, finished_at_session=NULL;
+//   - UPDATE rooms SET bank_id, question_order, settings, asked_question_ids=[],
+//     current_question_id=NULL, status='waiting'.
+//
+// asked очищается, статус становится waiting (preподаватель потом
+// делает /start чтобы перейти в active).
+func (r *RoomsRepo) RestartRoom(
+	ctx context.Context,
+	roomID uuid.UUID,
+	bankID uuid.UUID,
+	questionOrder []uuid.UUID,
+	settings []byte,
+) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM answers WHERE room_id = $1`, roomID); err != nil {
+		return fmt.Errorf("clear answers: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE participants
+		SET current_question_idx = 0, finished_at_session = NULL
+		WHERE room_id = $1`, roomID); err != nil {
+		return fmt.Errorf("reset participants: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE rooms
+		SET bank_id             = $2,
+		    question_order      = $3,
+		    asked_question_ids  = ARRAY[]::uuid[],
+		    current_question_id = NULL,
+		    current_started_at  = NULL,
+		    settings            = $4,
+		    status              = 'waiting'
+		WHERE id = $1`, roomID, bankID, questionOrder, settings); err != nil {
+		return fmt.Errorf("update room: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
 // AddParticipant подключает пользователя к комнате. Повторное подключение
 // того же user_id к той же комнате — ErrAlreadyJoined (UNIQUE-нарушение).
 func (r *RoomsRepo) AddParticipant(ctx context.Context, p *Participant) error {
