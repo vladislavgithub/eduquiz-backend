@@ -31,6 +31,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	}
 
 	r := gin.New()
+	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware())
 
