@@ -1,0 +1,36 @@
+name: Logs
+
+# Ручной сбор логов с ВМ.
+on:
+  workflow_dispatch:
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY_B64 }}" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Dump logs
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -se <<'EOF'
+          cd /opt/eduquiz
+          echo "=== ps ==="
+          docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+          echo ""
+          echo "=== api last 200 lines ==="
+          docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=200 api 2>&1
+          echo ""
+          echo "=== caddy last 100 lines ==="
+          docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=100 caddy 2>&1
+          echo ""
+          echo "=== Caddyfile ==="
+          cat /opt/eduquiz/deploy/Caddyfile
+          EOF
