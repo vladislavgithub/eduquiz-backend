@@ -46,7 +46,7 @@ jobs:
               -e POSTGRES_USER=eduquiz \
               -e POSTGRES_DB=eduquiz \
               -e POSTGRES_PASSWORD="eduquiz-demo-pgpwd-rotate-after-defense" \
-              golang:1.23-bookworm \
+              golang:1.25-bookworm \
               go run ./cmd/seed
             touch /opt/eduquiz/.seeded
           else
