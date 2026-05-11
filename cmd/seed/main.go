@@ -36,6 +36,10 @@ const (
 	student2Password = "student123"
 	student2Name     = "Иванов Иван"
 
+	adminEmail    = "admin@eduquiz.ru"
+	adminPassword = "admin123"
+	adminName     = "Администратор"
+
 	courseTitle = "Надёжность технических систем"
 	courseDesc  = "Демо-курс по дисциплине «Надёжность» Волкова Д.А., " +
 		"кафедра АСУ РГУ нефти и газа им. Губкина."
@@ -81,6 +85,9 @@ func main() {
 	}
 	if _, err := upsertUser(ctx, pool, student2Email, student2Password, student2Name, "student"); err != nil {
 		log.Fatalf("upsert student2: %v", err)
+	}
+	if _, err := upsertUser(ctx, pool, adminEmail, adminPassword, adminName, "admin"); err != nil {
+		log.Fatalf("upsert admin: %v", err)
 	}
 
 	// Курс: дропаем существующий с тем же titles+teacher и пересоздаём.

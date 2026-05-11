@@ -101,3 +101,92 @@ func (r *UsersRepo) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	}
 	return &u, nil
 }
+
+// ListAll возвращает пагинированный список пользователей с опциональными
+// фильтрами по подстроке (email/full_name) и роли. Используется админ-панелью.
+// total — общее количество подходящих под фильтр (для UI пагинации).
+func (r *UsersRepo) ListAll(ctx context.Context, q string, role string, limit, offset int) ([]User, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	// Используем параметры с COALESCE, чтобы фильтры могли отсутствовать.
+	const countSQL = `
+        SELECT COUNT(*) FROM users
+        WHERE ($1 = '' OR email ILIKE '%' || $1 || '%' OR full_name ILIKE '%' || $1 || '%')
+          AND ($2 = '' OR role = $2)`
+	const listSQL = `
+        SELECT id, email, password_hash, full_name, role, created_at, updated_at
+        FROM users
+        WHERE ($1 = '' OR email ILIKE '%' || $1 || '%' OR full_name ILIKE '%' || $1 || '%')
+          AND ($2 = '' OR role = $2)
+        ORDER BY created_at DESC
+        LIMIT $3 OFFSET $4`
+	var total int
+	if err := r.pool.QueryRow(ctx, countSQL, q, role).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count users: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, listSQL, q, role, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	out := make([]User, 0, limit)
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan user: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, total, rows.Err()
+}
+
+// UpdateProfile обновляет full_name и/или role одной транзакцией.
+// Если поле — пустая строка, оно не меняется. Возвращает ErrNotFound если юзера нет.
+func (r *UsersRepo) UpdateProfile(ctx context.Context, id uuid.UUID, fullName, role string) error {
+	const q = `
+        UPDATE users
+        SET full_name = CASE WHEN $2 = '' THEN full_name ELSE $2 END,
+            role      = CASE WHEN $3 = '' THEN role ELSE $3 END,
+            updated_at = now()
+        WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id, strings.TrimSpace(fullName), role)
+	if err != nil {
+		return fmt.Errorf("update user profile: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdatePassword меняет хеш пароля пользователя. Хеш считается на уровне выше
+// (handler передаёт bcrypt-hash).
+func (r *UsersRepo) UpdatePassword(ctx context.Context, id uuid.UUID, hash string) error {
+	const q = `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id, hash)
+	if err != nil {
+		return fmt.Errorf("update user password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Delete удаляет пользователя. Связанные сущности (courses, rooms, answers)
+// удалятся по FK ON DELETE CASCADE (см. migrations/0002_courses.up.sql).
+func (r *UsersRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	const q = `DELETE FROM users WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

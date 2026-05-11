@@ -105,6 +105,98 @@ func (r *RoomsRepo) GetByCode(ctx context.Context, code string) (*Room, error) {
 	return r.scanRoom(ctx, "code = $1", code)
 }
 
+// AdminRoomRow — комната с инфой о владельце-курсе и счётчиками для админ-панели.
+type AdminRoomRow struct {
+	Room
+	CourseTitle       string
+	TeacherID         uuid.UUID
+	TeacherName       string
+	ParticipantsCount int
+}
+
+// ListAllRooms возвращает все комнаты (без owner-фильтра) с фильтром по статусу
+// и пагинацией. Для админ-панели.
+func (r *RoomsRepo) ListAllRooms(ctx context.Context, status string, limit, offset int) ([]AdminRoomRow, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	const countSQL = `
+        SELECT COUNT(*) FROM rooms r
+        WHERE $1 = '' OR r.status::text = $1`
+	const listSQL = `
+        SELECT r.id, r.course_id, r.bank_id, r.code, r.title, r.status::text,
+               r.current_question_id, r.current_started_at,
+               r.question_order, r.asked_question_ids, r.settings,
+               r.created_at, r.started_at, r.finished_at,
+               c.title AS course_title,
+               c.teacher_id, u.full_name,
+               COALESCE((SELECT COUNT(*) FROM participants p WHERE p.room_id = r.id), 0)
+        FROM rooms r
+        JOIN courses c ON c.id = r.course_id
+        JOIN users   u ON u.id = c.teacher_id
+        WHERE $1 = '' OR r.status::text = $1
+        ORDER BY r.created_at DESC
+        LIMIT $2 OFFSET $3`
+	var total int
+	if err := r.pool.QueryRow(ctx, countSQL, status).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count rooms: %w", err)
+	}
+	rows, err := r.pool.Query(ctx, listSQL, status, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list all rooms: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AdminRoomRow, 0, limit)
+	for rows.Next() {
+		var x AdminRoomRow
+		if err := rows.Scan(
+			&x.ID, &x.CourseID, &x.BankID, &x.Code, &x.Title, &x.Status,
+			&x.CurrentQuestionID, &x.CurrentStartedAt,
+			&x.QuestionOrder, &x.AskedQuestionIDs, &x.Settings,
+			&x.CreatedAt, &x.StartedAt, &x.FinishedAt,
+			&x.CourseTitle, &x.TeacherID, &x.TeacherName, &x.ParticipantsCount,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan admin room: %w", err)
+		}
+		out = append(out, x)
+	}
+	return out, total, rows.Err()
+}
+
+// DeleteRoom удаляет комнату. Участники и ответы каскадно (FK ON DELETE CASCADE).
+func (r *RoomsRepo) DeleteRoom(ctx context.Context, id uuid.UUID) error {
+	const q = `DELETE FROM rooms WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("delete room: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ForceFinish переводит комнату в finished независимо от текущего статуса.
+// Используется админом для принудительного завершения.
+func (r *RoomsRepo) ForceFinish(ctx context.Context, id uuid.UUID) error {
+	const q = `
+        UPDATE rooms
+        SET status = 'finished'::room_status,
+            finished_at = COALESCE(finished_at, now())
+        WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("force finish room: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *RoomsRepo) scanRoom(ctx context.Context, where string, arg any) (*Room, error) {
 	sql := `
         SELECT id, course_id, bank_id, code, title, status::text,

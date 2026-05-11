@@ -69,6 +69,64 @@ func (r *AnswersRepo) DeleteByParticipant(ctx context.Context, roomID, participa
 	return err
 }
 
+// AdminAnswerRow — расширенная запись ответа для админ-панели:
+// включает текст вопроса и nickname участника.
+type AdminAnswerRow struct {
+	ID            uuid.UUID
+	QuestionID    uuid.UUID
+	QuestionText  string
+	ParticipantID uuid.UUID
+	Nickname      string
+	Value         json.RawMessage
+	IsCorrect     *bool
+	AwardedXP     int
+	ElapsedMs     int
+	CreatedAt     time.Time
+}
+
+// ListByRoomAdmin — все ответы внутри комнаты (по всем участникам) с join'ами
+// на questions и participants. Для админ-просмотра «что кто ответил».
+func (r *AnswersRepo) ListByRoomAdmin(ctx context.Context, roomID uuid.UUID) ([]AdminAnswerRow, error) {
+	const sql = `
+        SELECT a.id, a.question_id, q.text,
+               a.participant_id, p.nickname,
+               a.value, a.is_correct, a.awarded_xp, a.elapsed_ms, a.created_at
+        FROM answers a
+        JOIN questions q    ON q.id = a.question_id
+        JOIN participants p ON p.id = a.participant_id
+        WHERE a.room_id = $1
+        ORDER BY a.created_at ASC`
+	rows, err := r.pool.Query(ctx, sql, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("list admin answers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AdminAnswerRow, 0, 32)
+	for rows.Next() {
+		var x AdminAnswerRow
+		if err := rows.Scan(&x.ID, &x.QuestionID, &x.QuestionText,
+			&x.ParticipantID, &x.Nickname,
+			&x.Value, &x.IsCorrect, &x.AwardedXP, &x.ElapsedMs, &x.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan admin answer: %w", err)
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// DeleteAnswer удаляет одиночный ответ. Для админа: «снять» некорректный ответ.
+func (r *AnswersRepo) DeleteAnswer(ctx context.Context, id uuid.UUID) error {
+	const q = `DELETE FROM answers WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("delete answer: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // CountForQuestion возвращает количество ответов на текущий вопрос
 // (для отображения «X из Y участников ответили» в реальном времени).
 func (r *AnswersRepo) CountForQuestion(ctx context.Context, roomID, questionID uuid.UUID) (int, error) {
