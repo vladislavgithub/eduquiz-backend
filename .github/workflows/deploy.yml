@@ -62,3 +62,18 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           curl -fsS --max-time 10 --retry 5 --retry-delay 3 "http://${DEPLOY_HOST}/healthz"
+
+      - name: Dump api+caddy logs (debug)
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        if: always()
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -se <<'EOF'
+          cd /opt/eduquiz
+          echo "=== api last 150 ==="
+          docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=150 api 2>&1
+          echo ""
+          echo "=== caddy last 60 ==="
+          docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=60 caddy 2>&1
+          EOF
