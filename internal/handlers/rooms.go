@@ -677,10 +677,16 @@ func (h *RoomsHandler) SubmitAnswer(c *gin.Context) {
 	}
 
 	count, _ := h.answers.CountForQuestion(c.Request.Context(), roomID, qID)
+	// nickname+value нужны host-у, чтобы показать "кто как ответил" в реальном времени.
+	// Студенты получают этот event тоже, но в их UI value/nickname игнорируются до review.
+	var rawValue any
+	_ = json.Unmarshal(req.Value, &rawValue)
 	h.bcast.Broadcast(roomID, "question.answered", gin.H{
 		"question_id":      qID.String(),
 		"participant_id":   participant.ID.String(),
 		"answers_received": count,
+		"nickname":         participant.Nickname,
+		"value":            rawValue,
 	})
 
 	// XP в журнал, прогресс, бейджи, SM-2 — побочные эффекты.
