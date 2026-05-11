@@ -51818,7 +51818,7 @@ bz(){this.cl()
 this.cd()
 this.fe()}}
 A.aWP.prototype={
-$1(a){var s,r=A.bet("https://eduquiz.duckdns.org",B.lO,A.aA(["Content-Type","application/json"],t.N,t.z),B.Kb,B.lO),q=new A.Vj(A.b([B.GB],t.i6))
+$1(a){var s,r=A.bet("http://81.26.189.94",B.lO,A.aA(["Content-Type","application/json"],t.N,t.z),B.Kb,B.lO),q=new A.Vj(A.b([B.GB],t.i6))
 q.N(q,B.Qe)
 s=new A.Tw($,q,$,new A.akU(51200),!1)
 s.a3D$=r
@@ -54627,7 +54627,7 @@ s=q.cy
 if(s!=null)s.ah(0)
 s=q.db
 if(s!=null)s.aO(0)
-r=A.b5K(p,"https://eduquiz.duckdns.org",q.a.d)
+r=A.b5K(p,"http://81.26.189.94",q.a.d)
 q.cy=r
 q.db=r.ga3v().cw(q.gaqY(),!0,q.gau5(),new A.aQy(q))
 q.I(new A.aQz(q))},
@@ -55609,7 +55609,7 @@ s=q.CW
 if(s!=null)s.ah(0)
 s=q.cx
 if(s!=null)s.aO(0)
-r=A.b5K(p,"https://eduquiz.duckdns.org",q.a.d)
+r=A.b5K(p,"http://81.26.189.94",q.a.d)
 q.CW=r
 q.cx=r.ga3v().cw(q.gavs(),!0,q.gavv(),new A.aSc(q))
 q.I(new A.aSd(q))},
@@ -56852,7 +56852,7 @@ A.zH.prototype={
 B(a){var s,r=this.c
 if(r==null||r.length===0)return B.ak
 if(B.c.be(r,"http"))s=r
-else s="https://eduquiz.duckdns.org"+(B.c.be(r,"/")?r:"/"+r)
+else s="http://81.26.189.94"+(B.c.be(r,"/")?r:"/"+r)
 return new A.ae(B.iT,A.xS(A.aK(12),new A.cl(new A.a7(0,1/0,0,this.d),A.b2x(new A.aud(a),B.pd,s,new A.aue(a)),null)),null)}}
 A.aue.prototype={
 $2(a,b){var s=null,r=A.c(this.a).ax,q=r.R8
@@ -58456,7 +58456,7 @@ s=A.c(s).ax
 r=s.R8
 s=r==null?s.k2:r
 return A.au(B.A,B.lF,B.i,o,o,new A.ap(s,o,o,A.aK(12),o,o,o,B.q),o,80,o,o,o,o,o,o)}q=p.at
-if(q!=null){if(!B.c.be(q,"http"))q="https://eduquiz.duckdns.org"+(B.c.be(q,"/")?q:"/"+q)
+if(q!=null){if(!B.c.be(q,"http"))q="http://81.26.189.94"+(B.c.be(q,"/")?q:"/"+q)
 s=t.p
 return A.as(A.b([A.xS(A.aK(12),new A.cl(B.FJ,A.b2x(new A.aO0(p),B.pd,q,o),o)),B.U,A.ba(A.b([A.b8(A.vf(B.MS,B.a2T,p.gYH(),o),1),B.aN,A.b8(A.vf(B.rM,B.a2E,new A.aO1(p),o),1)],s),B.n,B.h,B.k,0)],s),B.a_,B.h,B.k)}return A.ba(A.b([A.b8(A.vf(B.MT,B.a33,p.gYH(),o),1),B.aN,A.b8(A.vf(B.MK,B.a31,p.gajy(),o),1)],t.p),B.n,B.h,B.k,0)},
 ag1(){var s=this,r=s.d
