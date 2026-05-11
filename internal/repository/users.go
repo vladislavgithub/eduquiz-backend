@@ -116,12 +116,12 @@ func (r *UsersRepo) ListAll(ctx context.Context, q string, role string, limit, o
 	const countSQL = `
         SELECT COUNT(*) FROM users
         WHERE ($1 = '' OR email ILIKE '%' || $1 || '%' OR full_name ILIKE '%' || $1 || '%')
-          AND ($2 = '' OR role = $2)`
+          AND ($2 = '' OR role::text = $2)`
 	const listSQL = `
-        SELECT id, email, password_hash, full_name, role, created_at, updated_at
+        SELECT id, email, password_hash, full_name, role::text, created_at, updated_at
         FROM users
         WHERE ($1 = '' OR email ILIKE '%' || $1 || '%' OR full_name ILIKE '%' || $1 || '%')
-          AND ($2 = '' OR role = $2)
+          AND ($2 = '' OR role::text = $2)
         ORDER BY created_at DESC
         LIMIT $3 OFFSET $4`
 	var total int
@@ -150,7 +150,7 @@ func (r *UsersRepo) UpdateProfile(ctx context.Context, id uuid.UUID, fullName, r
 	const q = `
         UPDATE users
         SET full_name = CASE WHEN $2 = '' THEN full_name ELSE $2 END,
-            role      = CASE WHEN $3 = '' THEN role ELSE $3 END,
+            role      = CASE WHEN $3 = '' THEN role ELSE $3::user_role END,
             updated_at = now()
         WHERE id = $1`
 	tag, err := r.pool.Exec(ctx, q, id, strings.TrimSpace(fullName), role)
