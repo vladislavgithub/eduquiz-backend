@@ -75,11 +75,12 @@ type questionResp struct {
 	Kind         string          `json:"kind"`
 	Text         string          `json:"text"`
 	Options      json.RawMessage `json:"options"`
+	Correct      json.RawMessage `json:"correct,omitempty"`
 	Difficulty   int             `json:"difficulty"`
 	Topic        string          `json:"topic,omitempty"`
 	TimeLimitSec int             `json:"time_limit_sec"`
-	// correct по умолчанию НЕ возвращаем студентам в публичной выдаче;
-	// для учительских ручек — отдельный handler с includeCorrect=true.
+	// correct возвращается только из учительских ручек (после ownership-проверки).
+	// Студенты получают вопросы через WS — поле correct туда не попадает.
 }
 
 // --- Endpoints ---
@@ -465,7 +466,7 @@ func toBankResp(b *repository.QuestionBank) bankResp {
 func toQuestionResp(q *repository.Question) questionResp {
 	return questionResp{
 		ID: q.ID.String(), BankID: q.BankID.String(),
-		Kind: q.Kind, Text: q.Text, Options: q.Options,
+		Kind: q.Kind, Text: q.Text, Options: q.Options, Correct: q.Correct,
 		Difficulty: q.Difficulty, Topic: q.Topic,
 		TimeLimitSec: q.TimeLimitSec,
 	}
