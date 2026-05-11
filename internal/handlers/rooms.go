@@ -988,6 +988,53 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher.POST("/:id/next", h.NextQuestion)
 	teacher.POST("/:id/finish", h.FinishRoom)
 	teacher.POST("/:id/restart", h.RestartRoom)
+	teacher.GET("/:id/participants/:pid/answers", h.ParticipantAnswers)
+}
+
+// ParticipantAnswers — GET /api/v1/rooms/:id/participants/:pid/answers.
+// Возвращает историю ответов участника с подсветкой correct/wrong.
+// Доступен только владельцу комнаты (teacher).
+func (h *RoomsHandler) ParticipantAnswers(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	pid, err := uuid.Parse(c.Param("pid"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid participant id"})
+		return
+	}
+	list, err := h.answers.ListByParticipant(c.Request.Context(), roomID, pid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list participant answers"})
+		return
+	}
+	type item struct {
+		QuestionID   string          `json:"question_id"`
+		QuestionText string          `json:"question_text"`
+		QuestionKind string          `json:"question_kind"`
+		Options      json.RawMessage `json:"options,omitempty"`
+		Correct      json.RawMessage `json:"correct,omitempty"`
+		Value        json.RawMessage `json:"value"`
+		IsCorrect    *bool           `json:"is_correct"`
+		AwardedXP    int             `json:"awarded_xp"`
+		ElapsedMs    int             `json:"elapsed_ms"`
+	}
+	out := make([]item, 0, len(list))
+	for _, pa := range list {
+		out = append(out, item{
+			QuestionID:   pa.QuestionID.String(),
+			QuestionText: pa.QuestionText,
+			QuestionKind: pa.QuestionKind,
+			Options:      pa.Options,
+			Correct:      pa.Correct,
+			Value:        pa.Value,
+			IsCorrect:    pa.IsCorrect,
+			AwardedXP:    pa.AwardedXP,
+			ElapsedMs:    pa.ElapsedMs,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
 // --- helpers ---

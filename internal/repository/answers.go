@@ -84,6 +84,50 @@ func (r *AnswersRepo) CountForQuestion(ctx context.Context, roomID, questionID u
 	return n, nil
 }
 
+// ParticipantAnswer — ответ участника с информацией о вопросе для отображения у учителя.
+type ParticipantAnswer struct {
+	QuestionID   uuid.UUID
+	QuestionText string
+	QuestionKind string
+	Options      json.RawMessage // [{id, text}]
+	Correct      json.RawMessage // правильный ответ (для подсветки в UI)
+	Value        json.RawMessage // что выбрал/написал участник
+	IsCorrect    *bool           // nil для open_text/qna до ручной проверки
+	AwardedXP    int
+	ElapsedMs    int
+	CreatedAt    time.Time
+}
+
+// ListByParticipant возвращает все ответы участника в комнате с расширенной
+// информацией о вопросе. Используется для teacher-view "история ответов студента".
+func (r *AnswersRepo) ListByParticipant(ctx context.Context, roomID, participantID uuid.UUID) ([]ParticipantAnswer, error) {
+	const sql = `
+        SELECT a.question_id, q.text, q.kind::text, q.options, q.correct,
+               a.value, a.is_correct, a.awarded_xp, a.elapsed_ms, a.created_at
+        FROM answers a
+        JOIN questions q ON q.id = a.question_id
+        WHERE a.room_id = $1 AND a.participant_id = $2
+        ORDER BY a.created_at ASC`
+	rows, err := r.pool.Query(ctx, sql, roomID, participantID)
+	if err != nil {
+		return nil, fmt.Errorf("list participant answers: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]ParticipantAnswer, 0, 8)
+	for rows.Next() {
+		var pa ParticipantAnswer
+		if err := rows.Scan(
+			&pa.QuestionID, &pa.QuestionText, &pa.QuestionKind, &pa.Options, &pa.Correct,
+			&pa.Value, &pa.IsCorrect, &pa.AwardedXP, &pa.ElapsedMs, &pa.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan participant answer: %w", err)
+		}
+		out = append(out, pa)
+	}
+	return out, rows.Err()
+}
+
 // LeaderboardEntry — строка таблицы лидеров по сумме XP в комнате.
 type LeaderboardEntry struct {
 	ParticipantID      uuid.UUID
