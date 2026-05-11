@@ -11,6 +11,10 @@ on:
         description: "Skip build/restart, just dump logs"
         type: boolean
         default: false
+      force_seed:
+        description: "Re-run seed (idempotent: upsert users/courses)"
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -40,8 +44,8 @@ jobs:
           docker build -t local/eduquiz-api .
           docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 
-          if [ ! -f /opt/eduquiz/.seeded ]; then
-            echo "Running seed (first time)..."
+          if [ ! -f /opt/eduquiz/.seeded ] || [ "${{ inputs.force_seed }}" = "true" ]; then
+            echo "Running seed (first time or force_seed=true)..."
             docker run --rm \
               --network eduquiz_eduquiz_internal \
               -v /opt/eduquiz:/app \
