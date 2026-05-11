@@ -6,6 +6,11 @@ on:
   push:
     branches: [deploy-demo]
   workflow_dispatch:
+    inputs:
+      logs_only:
+        description: "Skip build/restart, just dump logs"
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -19,6 +24,7 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Pull, build, restart, seed-once
+        if: ${{ inputs.logs_only != true }}
         env:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -58,6 +64,7 @@ jobs:
           EOF
 
       - name: Verify healthz
+        if: ${{ inputs.logs_only != true }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
