@@ -43,6 +43,7 @@ jobs:
 
           docker build -t local/eduquiz-api .
           docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+          docker compose -f docker-compose.prod.yml --env-file .env.prod restart caddy
 
           if [ ! -f /opt/eduquiz/.seeded ] || [ "${{ inputs.force_seed }}" = "true" ]; then
             echo "Running seed (first time or force_seed=true)..."
