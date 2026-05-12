@@ -49,6 +49,12 @@
 	}
 	reverse_proxy @health api:8080
 
+	# Загруженные пользователями файлы (картинки к вопросам)
+	handle /files/* {
+		root * /srv
+		file_server
+	}
+
 	# Flutter Web SPA: статика + клиентский роутинг.
 	handle {
 		root * /srv/web

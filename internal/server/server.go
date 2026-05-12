@@ -76,8 +76,9 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 		gamifRepo, sm2Repo,
 		hub,
 	)
-	meHandler := handlers.NewMeHandler(gamifRepo, sm2Repo, coursesRepo, questionsRepo)
+	meHandler := handlers.NewMeHandler(gamifRepo, sm2Repo, coursesRepo, questionsRepo, usersRepo)
 	adminHandler := handlers.NewAdminHandler(usersRepo, coursesRepo, roomsRepo, answersRepo, deps.DB)
+	uploadsHandler := handlers.NewUploadsHandler("/srv/uploads")
 
 	api := r.Group("/api/v1")
 	// Body size cap: 1 MiB на любой запрос. Защищает от мегабайтных
@@ -100,6 +101,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	roomsHandler.Routes(api, issuer)
 	meHandler.Routes(api, issuer)
 	adminHandler.Routes(api, issuer)
+	api.POST("/uploads", auth.RequireAuth(issuer), uploadsHandler.Upload)
 
 	// WebSocket вне /api/v1 — общепринятая практика для real-time.
 	r.GET("/ws/rooms/:id", wsHandler.ServeWS)

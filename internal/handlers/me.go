@@ -25,6 +25,7 @@ type MeHandler struct {
 	sm2       *repository.SM2Repo
 	courses   *repository.CoursesRepo
 	questions *repository.QuestionsRepo
+	users     *repository.UsersRepo
 }
 
 func NewMeHandler(
@@ -32,12 +33,15 @@ func NewMeHandler(
 	sm2 *repository.SM2Repo,
 	courses *repository.CoursesRepo,
 	questions *repository.QuestionsRepo,
+	users *repository.UsersRepo,
 ) *MeHandler {
-	return &MeHandler{gamif: gamif, sm2: sm2, courses: courses, questions: questions}
+	return &MeHandler{gamif: gamif, sm2: sm2, courses: courses, questions: questions, users: users}
 }
 
 func (h *MeHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	authed := api.Group("/me", auth.RequireAuth(issuer))
+	authed.PATCH("", h.UpdateProfile)
+	authed.POST("/change-password", h.ChangePassword)
 	authed.GET("/progress", h.ListProgress)
 	authed.GET("/progress/:cid", h.CourseProgress)
 	authed.GET("/badges", h.ListBadges)
@@ -93,6 +97,60 @@ type sm2AnswerResp struct {
 }
 
 // --- Endpoints ---
+
+func (h *MeHandler) UpdateProfile(c *gin.Context) {
+	uid, _ := auth.UserIDFromContext(c)
+	var req struct {
+		FullName string `json:"full_name" binding:"required,min=2,max=200"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.users.UpdateProfile(c.Request.Context(), uid, req.FullName, ""); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update profile"})
+		return
+	}
+	u, _ := h.users.GetByID(c.Request.Context(), uid)
+	c.JSON(http.StatusOK, gin.H{
+		"id": u.ID.String(), "email": u.Email, "full_name": u.FullName, "role": u.Role,
+	})
+}
+
+func (h *MeHandler) ChangePassword(c *gin.Context) {
+	uid, _ := auth.UserIDFromContext(c)
+	var req struct {
+		OldPassword string `json:"old_password" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required,min=8,max=72"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	u, err := h.users.GetByID(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if !auth.VerifyPassword(u.PasswordHash, req.OldPassword) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "wrong current password"})
+		return
+	}
+	if err := auth.ValidatePasswordStrength(req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash password"})
+		return
+	}
+	if err := h.users.UpdatePassword(c.Request.Context(), uid, hash); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update password"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
 
 func (h *MeHandler) ListProgress(c *gin.Context) {
 	uid, _ := auth.UserIDFromContext(c)
