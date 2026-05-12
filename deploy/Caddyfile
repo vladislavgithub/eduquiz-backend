@@ -25,39 +25,38 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "geolocation=(), microphone=(), camera=()"
-		# Удалить серверный баннер
 		-Server
 	}
 
-	# WebSocket-эндпоинты (real-time комнаты)
-	@ws {
-		path /ws /ws/*
-	}
-	reverse_proxy @ws api:8080
-
-	# REST API
-	@api {
-		path /api /api/*
-	}
-	reverse_proxy @api api:8080 {
-		header_up Host {host}
-		header_up X-Real-IP {remote_host}
+	# WebSocket-эндпоинты
+	handle /ws/* {
+		reverse_proxy api:8080
 	}
 
-	# Health-эндпоинты (для мониторинга/uptime-чеков)
-	@health {
-		path /healthz /readyz
+	# REST API (без strip_prefix — API ожидает /api/v1/...)
+	handle /api/* {
+		reverse_proxy api:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+		}
 	}
-	reverse_proxy @health api:8080
 
-	# Загруженные пользователями файлы (картинки к вопросам)
+	# Health-эндпоинты
+	handle /healthz {
+		reverse_proxy api:8080
+	}
+	handle /readyz {
+		reverse_proxy api:8080
+	}
+
+	# Загруженные файлы (картинки к вопросам)
 	handle /files/* {
 		uri strip_prefix /files
 		root * /srv/uploads
 		file_server
 	}
 
-	# Flutter Web SPA: статика + клиентский роутинг.
+	# Flutter Web SPA
 	handle {
 		root * /srv/web
 		try_files {path} /index.html
