@@ -80,8 +80,7 @@ type questionResp struct {
 	Difficulty   int             `json:"difficulty"`
 	Topic        string          `json:"topic,omitempty"`
 	TimeLimitSec int             `json:"time_limit_sec"`
-	// correct возвращается только из учительских ручек (после ownership-проверки).
-	// Студенты получают вопросы через WS — поле correct туда не попадает.
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 // --- Endpoints ---
@@ -653,6 +652,6 @@ func toQuestionResp(q *repository.Question) questionResp {
 		ID: q.ID.String(), BankID: q.BankID.String(),
 		Kind: q.Kind, Text: q.Text, Options: q.Options, Correct: q.Correct,
 		Difficulty: q.Difficulty, Topic: q.Topic,
-		TimeLimitSec: q.TimeLimitSec,
+		TimeLimitSec: q.TimeLimitSec, Metadata: q.Metadata,
 	}
 }
