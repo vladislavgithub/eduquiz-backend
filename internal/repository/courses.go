@@ -216,6 +216,32 @@ func (r *CoursesRepo) DeleteCourse(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// UpdateBank меняет title банка.
+func (r *CoursesRepo) UpdateBank(ctx context.Context, id uuid.UUID, title string) error {
+	const q = `UPDATE question_banks SET title = $2 WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id, title)
+	if err != nil {
+		return fmt.Errorf("update bank: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteBank удаляет банк. Вопросы каскадно удалятся по FK ON DELETE CASCADE.
+func (r *CoursesRepo) DeleteBank(ctx context.Context, id uuid.UUID) error {
+	const q = `DELETE FROM question_banks WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("delete bank: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListBanksByCourse возвращает все банки курса.
 func (r *CoursesRepo) ListBanksByCourse(ctx context.Context, courseID uuid.UUID) ([]QuestionBank, error) {
 	const q = `

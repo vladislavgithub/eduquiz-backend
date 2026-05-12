@@ -426,6 +426,98 @@ func (h *CoursesHandler) requireOwnedCourse(c *gin.Context) (uuid.UUID, bool) {
 	return courseID, true
 }
 
+// UpdateCourse — PATCH /api/v1/courses/:id.
+func (h *CoursesHandler) UpdateCourse(c *gin.Context) {
+	courseID, ok := h.requireOwnedCourse(c)
+	if !ok {
+		return
+	}
+	var req courseReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.courses.UpdateCourse(c.Request.Context(), courseID, req.Title, nil); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update course"})
+		return
+	}
+	course, _ := h.courses.GetByID(c.Request.Context(), courseID)
+	c.JSON(http.StatusOK, toCourseResp(course))
+}
+
+// DeleteCourse — DELETE /api/v1/courses/:id.
+func (h *CoursesHandler) DeleteCourse(c *gin.Context) {
+	courseID, ok := h.requireOwnedCourse(c)
+	if !ok {
+		return
+	}
+	if err := h.courses.DeleteCourse(c.Request.Context(), courseID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete course"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// UpdateBank — PATCH /api/v1/banks/:id.
+func (h *CoursesHandler) UpdateBank(c *gin.Context) {
+	bankID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank id"})
+		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isBankOwnedBy(c, bankID, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
+		return
+	}
+	var req bankReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.courses.UpdateBank(c.Request.Context(), bankID, req.Title); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "bank not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update bank"})
+		return
+	}
+	bank, _ := h.courses.GetBank(c.Request.Context(), bankID)
+	c.JSON(http.StatusOK, toBankResp(bank))
+}
+
+// DeleteBank — DELETE /api/v1/banks/:id.
+func (h *CoursesHandler) DeleteBank(c *gin.Context) {
+	bankID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank id"})
+		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isBankOwnedBy(c, bankID, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
+		return
+	}
+	if err := h.courses.DeleteBank(c.Request.Context(), bankID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "bank not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete bank"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // Routes регистрирует все course-эндпоинты под /api/v1.
 // Все требуют роль teacher.
 func (h *CoursesHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
@@ -434,10 +526,14 @@ func (h *CoursesHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	c := teacher.Group("/courses")
 	c.GET("", h.ListCourses)
 	c.POST("", h.CreateCourse)
+	c.PATCH("/:id", h.UpdateCourse)
+	c.DELETE("/:id", h.DeleteCourse)
 	c.GET("/:id/banks", h.ListBanks)
 	c.POST("/:id/banks", h.CreateBank)
 
 	b := teacher.Group("/banks")
+	b.PATCH("/:id", h.UpdateBank)
+	b.DELETE("/:id", h.DeleteBank)
 	b.GET("/:id/questions", h.ListQuestions)
 	b.POST("/:id/questions", h.CreateQuestion)
 	b.GET("/:id/analytics", h.BankAnalytics)
