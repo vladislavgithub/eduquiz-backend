@@ -60,7 +60,7 @@ type bankResp struct {
 }
 
 type questionReq struct {
-	Kind         string          `json:"kind"           binding:"required,oneof=single_choice multi_choice open_text rating qna"`
+	Kind         string          `json:"kind"           binding:"required,oneof=single_choice multi_choice open_text rating qna true_false numerical"`
 	Text         string          `json:"text"           binding:"required,min=1"`
 	Options      json.RawMessage `json:"options"`
 	Correct      json.RawMessage `json:"correct"`
