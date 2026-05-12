@@ -36,11 +36,12 @@
 	reverse_proxy @ws api:8080
 
 	# REST API
-	handle_path /api/* {
-		reverse_proxy api:8080 {
-			header_up Host {host}
-			header_up X-Real-IP {remote_host}
-		}
+	@api {
+		path /api /api/*
+	}
+	reverse_proxy @api api:8080 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
 	}
 
 	# Health-эндпоинты (для мониторинга/uptime-чеков)
