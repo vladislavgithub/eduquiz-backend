@@ -67,6 +67,8 @@ services:
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
       ENV: ${ENV:-production}
+    volumes:
+      - uploads_data:/srv/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +91,7 @@ services:
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./web:/srv/web:ro          # Flutter web bundle (см. docs/DEPLOY.md)
+      - uploads_data:/srv/uploads:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -101,6 +104,7 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  uploads_data:
 
 networks:
   eduquiz_internal:
