@@ -6,6 +6,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,9 +158,20 @@ func (h *UploadsHandler) UploadFromURL(c *gin.Context) {
 		return
 	}
 
-	// Разрешаем только http/https
+	// Разрешаем http/https и data URI (base64)
 	parsed, err := url.Parse(req.URL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
+		return
+	}
+
+	// Обработка data URI: data:image/jpeg;base64,<data>
+	if parsed.Scheme == "data" {
+		h.saveFromDataURI(c, req.URL)
+		return
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
 		return
 	}
@@ -246,4 +258,59 @@ func mimeToExt(mime string) (string, bool) {
 		return ".webp", true
 	}
 	return "", false
+}
+
+// saveFromDataURI декодирует data:image/...;base64,<data> и сохраняет файл.
+func (h *UploadsHandler) saveFromDataURI(c *gin.Context, dataURI string) {
+	// Формат: data:<mime>;base64,<data>
+	comma := strings.Index(dataURI, ",")
+	if comma < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid data uri"})
+		return
+	}
+	meta := dataURI[5:comma] // убираем "data:"
+	encoded := dataURI[comma+1:]
+
+	mimeType := meta
+	if idx := strings.Index(meta, ";"); idx >= 0 {
+		mimeType = meta[:idx]
+	}
+
+	ext, ok := mimeToExt(mimeType)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported image type: " + mimeType})
+		return
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		// Попробуем RawStdEncoding (без padding)
+		decoded, err = base64.RawStdEncoding.DecodeString(encoded)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid base64"})
+			return
+		}
+	}
+
+	if int64(len(decoded)) > maxImageBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large"})
+		return
+	}
+
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "mkdir"})
+		return
+	}
+
+	name := uuid.New().String() + ext
+	if err := os.WriteFile(filepath.Join(h.dir, name), decoded, 0o644); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "write file"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"url":  "/files/" + name,
+		"size": len(decoded),
+		"mime": mimeType,
+	})
 }
