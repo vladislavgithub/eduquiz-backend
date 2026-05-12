@@ -8,17 +8,15 @@
 #   /*        → /srv/web  (Flutter Web SPA, fallback на index.html)
 
 {
-	# Глобальные опции
-	email admin@{$DOMAIN}
+	email admin@eduquizz.ru
 	servers {
 		protocols h1 h2 h3
 	}
 }
 
-{$DOMAIN} {
+eduquizz.ru {
 	encode zstd gzip
 
-	# Безопасность по умолчанию
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Frame-Options "DENY"
@@ -28,12 +26,10 @@
 		-Server
 	}
 
-	# WebSocket-эндпоинты
 	handle /ws/* {
 		reverse_proxy api:8080
 	}
 
-	# REST API (без strip_prefix — API ожидает /api/v1/...)
 	handle /api/* {
 		reverse_proxy api:8080 {
 			header_up Host {host}
@@ -41,7 +37,6 @@
 		}
 	}
 
-	# Health-эндпоинты
 	handle /healthz {
 		reverse_proxy api:8080
 	}
@@ -49,14 +44,12 @@
 		reverse_proxy api:8080
 	}
 
-	# Загруженные файлы (картинки к вопросам)
 	handle /files/* {
 		uri strip_prefix /files
 		root * /srv/uploads
 		file_server
 	}
 
-	# Flutter Web SPA
 	handle {
 		root * /srv/web
 		try_files {path} /index.html

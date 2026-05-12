@@ -41,6 +41,9 @@ jobs:
           git checkout deploy-demo
           git reset --hard origin/deploy-demo
 
+          # Обновляем DOMAIN в .env.prod на реальный домен
+          sed -i 's|^DOMAIN=.*|DOMAIN=eduquizz.ru|' /opt/eduquiz/.env.prod
+
           docker build -t local/eduquiz-api .
           docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
           docker compose -f docker-compose.prod.yml --env-file .env.prod restart caddy
@@ -70,10 +73,8 @@ jobs:
 
       - name: Verify healthz
         if: ${{ inputs.logs_only != true }}
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          curl -fsS --max-time 10 --retry 5 --retry-delay 3 "http://${DEPLOY_HOST}/healthz"
+          curl -fsS --max-time 15 --retry 5 --retry-delay 5 "https://eduquizz.ru/healthz"
 
       - name: Dump api+caddy logs (debug)
         env:
