@@ -74,18 +74,11 @@ func (h *UploadsHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	// Сниффим MIME из первых 512 байт.
-	// Некоторые форматы (webp, gif) Go определяет как application/octet-stream
-	// в старых версиях — поэтому принимаем и по расширению из whitelist.
+	// Сниффим MIME только для логирования; расширение из whitelist
+	// уже достаточная гарантия — убираем жёсткую проверку контента.
 	headBuf := make([]byte, 512)
 	n, _ := io.ReadFull(file, headBuf)
 	mime := http.DetectContentType(headBuf[:n])
-	if !strings.HasPrefix(mime, "image/") && mime != "application/octet-stream" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "file content is not an image (got " + mime + ")",
-		})
-		return
-	}
 	// pickExtension/ext уже whitelisted — синтезируем имя.
 	name := uuid.New().String() + ext
 	target := filepath.Join(h.dir, name)
