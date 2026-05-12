@@ -316,6 +316,10 @@ func (h *CoursesHandler) BankAnalytics(c *gin.Context) {
 // isQuestionOwnedBy — то же самое, но для конкретного вопроса.
 // Цепочка question → bank → course → teacher.
 func (h *CoursesHandler) isQuestionOwnedBy(c *gin.Context, questionID, teacherID uuid.UUID) bool {
+	role, _ := auth.RoleFromContext(c)
+	if role == "admin" {
+		return true
+	}
 	q, err := h.questions.GetByID(c.Request.Context(), questionID)
 	if err != nil {
 		return false
@@ -327,6 +331,10 @@ func (h *CoursesHandler) isQuestionOwnedBy(c *gin.Context, questionID, teacherID
 // bank → course → teacher. Делается отдельным запросом, чтобы не тянуть
 // вопросы для проверки владения.
 func (h *CoursesHandler) isBankOwnedBy(c *gin.Context, bankID, teacherID uuid.UUID) bool {
+	role, _ := auth.RoleFromContext(c)
+	if role == "admin" {
+		return true
+	}
 	bank, err := h.courses.GetBank(c.Request.Context(), bankID)
 	if err != nil {
 		return false
@@ -417,6 +425,10 @@ func (h *CoursesHandler) requireOwnedCourse(c *gin.Context) (uuid.UUID, bool) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "get course"})
 		return uuid.Nil, false
+	}
+	role, _ := auth.RoleFromContext(c)
+	if role == "admin" {
+		return courseID, true
 	}
 	uid, _ := auth.UserIDFromContext(c)
 	if course.TeacherID != uid {
