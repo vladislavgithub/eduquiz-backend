@@ -51,7 +51,8 @@
 
 	# Загруженные пользователями файлы (картинки к вопросам)
 	handle /files/* {
-		root * /srv
+		uri strip_prefix /files
+		root * /srv/uploads
 		file_server
 	}
 
