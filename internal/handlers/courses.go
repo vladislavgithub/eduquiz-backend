@@ -465,7 +465,16 @@ func (h *CoursesHandler) ImportQuestions(c *gin.Context) {
 
 	imported := 0
 	for _, pq := range parsed {
-		opts, _ := json.Marshal(pq.Options)
+		// ParsedOption не имеет json-тегов → маршалим вручную в нужный формат.
+		type optDTO struct {
+			ID   string `json:"id"`
+			Text string `json:"text"`
+		}
+		optSlice := make([]optDTO, len(pq.Options))
+		for i, o := range pq.Options {
+			optSlice[i] = optDTO{ID: o.ID, Text: o.Text}
+		}
+		opts, _ := json.Marshal(optSlice)
 		corr, _ := json.Marshal(pq.Correct)
 		var meta json.RawMessage
 		if len(pq.Metadata) > 0 {
