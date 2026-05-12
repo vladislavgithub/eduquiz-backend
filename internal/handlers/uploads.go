@@ -6,6 +6,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -144,7 +145,14 @@ func (h *UploadsHandler) UploadFromURL(c *gin.Context) {
 	var req struct {
 		URL string `json:"url"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
+	// Читаем тело вручную — ShouldBindJSON может не сработать если
+	// Content-Type не выставлен браузером явно.
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil || len(bodyBytes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing body"})
+		return
+	}
+	if err := json.Unmarshal(bodyBytes, &req); err != nil || req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing url"})
 		return
 	}
