@@ -108,6 +108,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	meHandler.Routes(api, issuer)
 	adminHandler.Routes(api, issuer)
 	api.POST("/uploads", auth.RequireAuth(issuer), uploadsHandler.Upload)
+	api.POST("/uploads/from-url", auth.RequireAuth(issuer), uploadsHandler.UploadFromURL)
 
 	// WebSocket вне /api/v1 — общепринятая практика для real-time.
 	r.GET("/ws/rooms/:id", wsHandler.ServeWS)
