@@ -81,9 +81,15 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	uploadsHandler := handlers.NewUploadsHandler("/srv/uploads")
 
 	api := r.Group("/api/v1")
-	// Body size cap: 1 MiB на любой запрос. Защищает от мегабайтных
-	// JSON в /banks/:id/questions и от DoS большим телом запроса.
-	api.Use(bodySizeMiddleware(1 << 20))
+	// Body size cap: 1 MiB на любой запрос кроме /uploads (там до 5 MiB).
+	api.Use(func(c *gin.Context) {
+		limit := int64(1 << 20)
+		if c.FullPath() == "/api/v1/uploads" {
+			limit = 5<<20 + 4096 // 5 MiB + multipart overhead
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		c.Next()
+	})
 
 	api.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
