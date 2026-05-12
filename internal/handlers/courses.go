@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/vladislavgithub/eduquiz-backend/internal/auth"
+	importpkg "github.com/vladislavgithub/eduquiz-backend/internal/services/import"
 	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
 	"github.com/vladislavgithub/eduquiz-backend/internal/services"
 )
@@ -426,6 +427,84 @@ func (h *CoursesHandler) requireOwnedCourse(c *gin.Context) (uuid.UUID, bool) {
 	return courseID, true
 }
 
+// ImportQuestions — POST /api/v1/banks/:id/questions/import.
+// Принимает {format: "moodle_xml"|"gift", content: "..."}, парсит и
+// сохраняет вопросы в банк. Возвращает {imported, skipped, warnings}.
+func (h *CoursesHandler) ImportQuestions(c *gin.Context) {
+	bankID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank id"})
+		return
+	}
+	uid, _ := auth.UserIDFromContext(c)
+	if !h.isBankOwnedBy(c, bankID, uid) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
+		return
+	}
+	var req struct {
+		Format  string `json:"format"  binding:"required,oneof=moodle_xml gift"`
+		Content string `json:"content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var parsed []importpkg.ParsedQuestion
+	var warnings []importpkg.ImportWarning
+	switch req.Format {
+	case "moodle_xml":
+		parsed, warnings, err = importpkg.ParseMoodleXML([]byte(req.Content))
+	case "gift":
+		parsed, warnings, err = importpkg.ParseGIFT(req.Content)
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "parse error: " + err.Error()})
+		return
+	}
+
+	imported := 0
+	for _, pq := range parsed {
+		opts, _ := json.Marshal(pq.Options)
+		corr, _ := json.Marshal(pq.Correct)
+		var meta json.RawMessage
+		if len(pq.Metadata) > 0 {
+			meta, _ = json.Marshal(pq.Metadata)
+		}
+		diff := pq.Difficulty
+		if diff == 0 {
+			diff = 3
+		}
+		tl := pq.TimeLimitSec
+		if tl == 0 {
+			tl = 30
+		}
+		q := &repository.Question{
+			BankID: bankID, Kind: pq.Kind, Text: pq.Text,
+			Options: opts, Correct: corr,
+			Difficulty: diff, TimeLimitSec: tl, Metadata: meta,
+		}
+		if err := h.questions.Insert(c.Request.Context(), q); err == nil {
+			imported++
+		}
+	}
+
+	type warnDTO struct {
+		Index   int    `json:"index"`
+		Kind    string `json:"kind"`
+		Message string `json:"message"`
+	}
+	wDTOs := make([]warnDTO, len(warnings))
+	for i, w := range warnings {
+		wDTOs[i] = warnDTO{Index: w.Index, Kind: w.Kind, Message: w.Message}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"imported": imported,
+		"skipped":  len(parsed) - imported + len(warnings),
+		"warnings": wDTOs,
+	})
+}
+
 // UpdateCourse — PATCH /api/v1/courses/:id.
 func (h *CoursesHandler) UpdateCourse(c *gin.Context) {
 	courseID, ok := h.requireOwnedCourse(c)
@@ -536,6 +615,7 @@ func (h *CoursesHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	b.DELETE("/:id", h.DeleteBank)
 	b.GET("/:id/questions", h.ListQuestions)
 	b.POST("/:id/questions", h.CreateQuestion)
+	b.POST("/:id/questions/import", h.ImportQuestions)
 	b.GET("/:id/analytics", h.BankAnalytics)
 
 	q := teacher.Group("/questions")
