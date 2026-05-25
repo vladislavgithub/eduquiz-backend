@@ -46,6 +46,7 @@ type Participant struct {
 	LeftAt             *time.Time
 	CurrentQuestionIdx int        // в timer/race-режимах: какой вопрос сейчас у этого студента
 	FinishedAtSession  *time.Time // в solo-режимах: когда участник прошёл всю сессию
+	ResetCount         int        // race-режим: сколько раз сбрасывался прогресс
 }
 
 // Доменные ошибки.
@@ -423,14 +424,15 @@ func (r *RoomsRepo) AdvanceParticipant(ctx context.Context, participantID uuid.U
 func (r *RoomsRepo) ResetParticipant(ctx context.Context, participantID uuid.UUID) (*Participant, error) {
 	const sql = `
         UPDATE participants
-        SET current_question_idx = 0
+        SET current_question_idx = 0,
+            reset_count = reset_count + 1
         WHERE id = $1 AND finished_at_session IS NULL
         RETURNING id, room_id, user_id, nickname, joined_at, left_at,
-                  current_question_idx, finished_at_session`
+                  current_question_idx, finished_at_session, reset_count`
 	var p Participant
 	err := r.pool.QueryRow(ctx, sql, participantID).Scan(
 		&p.ID, &p.RoomID, &p.UserID, &p.Nickname, &p.JoinedAt, &p.LeftAt,
-		&p.CurrentQuestionIdx, &p.FinishedAtSession,
+		&p.CurrentQuestionIdx, &p.FinishedAtSession, &p.ResetCount,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

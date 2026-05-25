@@ -852,6 +852,7 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 		"current_question_idx": advanced.CurrentQuestionIdx,
 		"finished":             advanced.FinishedAtSession != nil,
 		"reset":                wrongInRace,
+		"reset_count":          advanced.ResetCount,
 	})
 
 	// Геймификация (XP-журнал, прогресс, бейджи, SM-2).
@@ -924,6 +925,7 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 		Total              int    `json:"total"`
 		CurrentQuestionIdx int    `json:"current_question_idx"`
 		IsFinished         bool   `json:"is_finished"`
+		ResetCount         int    `json:"reset_count"`
 	}
 	out := make([]row, 0, len(board))
 	for _, e := range board {
@@ -935,6 +937,7 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 			Total:              e.Total,
 			CurrentQuestionIdx: e.CurrentQuestionIdx,
 			IsFinished:         e.IsFinished,
+			ResetCount:         e.ResetCount,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})

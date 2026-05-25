@@ -196,6 +196,7 @@ type LeaderboardEntry struct {
 	Total              int
 	CurrentQuestionIdx int  // в timer/race: на каком вопросе сейчас (для race-bar)
 	IsFinished         bool // прошёл ли всю сессию (solo-режимы)
+	ResetCount         int  // race-режим: сколько раз сбрасывался прогресс
 }
 
 // Leaderboard агрегирует результаты комнаты в порядке убывания XP.
@@ -206,12 +207,13 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
                COALESCE(SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END), 0)::int    AS correct,
                COALESCE(COUNT(a.id), 0)::int                                      AS total,
                p.current_question_idx,
-               (p.finished_at_session IS NOT NULL)                                AS finished
+               (p.finished_at_session IS NOT NULL)                                AS finished,
+               p.reset_count
         FROM participants p
         LEFT JOIN answers a ON a.participant_id = p.id
         WHERE p.room_id = $1
         GROUP BY p.id, p.user_id, p.nickname, p.current_question_idx,
-                 p.finished_at_session, p.joined_at
+                 p.finished_at_session, p.joined_at, p.reset_count
         ORDER BY xp DESC, p.joined_at ASC`
 	rows, err := r.pool.Query(ctx, sql, roomID)
 	if err != nil {
@@ -225,7 +227,7 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
 		if err := rows.Scan(
 			&e.ParticipantID, &e.UserID, &e.Nickname,
 			&e.TotalXP, &e.Correct, &e.Total,
-			&e.CurrentQuestionIdx, &e.IsFinished,
+			&e.CurrentQuestionIdx, &e.IsFinished, &e.ResetCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan leaderboard: %w", err)
 		}
