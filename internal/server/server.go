@@ -98,7 +98,7 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 		})
 	})
 	// Rate-limit на /auth/* для защиты от brute-force и DoS bcrypt:
-	// register cost 12 ≈ 250 мс CPU, без лимита одна горутина положит api.
+	// register cost 11 ≈ 100 мс CPU, без лимита одна горутина положит api.
 	// 20 запросов в минуту с burst до 10 — нормально для людей,
 	// неприемлемо для perebor'а.
 	authLimiter := rateLimitMiddleware(20, 10)
