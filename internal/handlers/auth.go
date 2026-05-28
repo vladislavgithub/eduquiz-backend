@@ -221,6 +221,10 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 // не раскрывает, существует ли email (защита от user enumeration).
 const forgotPasswordMessage = "Если такой email зарегистрирован, мы отправили ссылку для сброса пароля"
 
+// resetCooldown — минимальный интервал между письмами сброса на один адрес
+// (анти-спам / защита от email-бомбинга).
+const resetCooldown = 2 * time.Minute
+
 // ForgotPassword обрабатывает POST /api/v1/auth/forgot-password.
 // ВСЕГДА отвечает 200 с generic-сообщением — независимо от того, найден
 // пользователь или нет, и удалось ли отправить письмо.
@@ -246,6 +250,22 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, gin.H{"message": forgotPasswordMessage})
 		return
+	}
+
+	// Кулдаун: не чаще одного письма на адрес в resetCooldown. Если запрос
+	// был недавно — молча отвечаем успехом, нового письма не шлём (защита
+	// от email-бомбинга). Ошибку проверки не считаем фатальной (fail-open).
+	if recent, rerr := h.resets.RecentlyRequested(ctx, u.ID, time.Now().Add(-resetCooldown)); rerr != nil {
+		h.log.Error("forgot-password: cooldown check", "err", rerr)
+	} else if recent {
+		c.JSON(http.StatusOK, gin.H{"message": forgotPasswordMessage})
+		return
+	}
+
+	// Гасим прошлые неиспользованные токены — активной остаётся только
+	// последняя выданная ссылка.
+	if err := h.resets.InvalidateUnused(ctx, u.ID); err != nil {
+		h.log.Error("forgot-password: invalidate old tokens", "err", err)
 	}
 
 	// Генерируем криптостойкий токен: 32 байта → hex. В письмо уходит
