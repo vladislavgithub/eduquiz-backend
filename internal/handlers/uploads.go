@@ -6,12 +6,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,6 +33,64 @@ type UploadsHandler struct {
 
 func NewUploadsHandler(dir string) *UploadsHandler {
 	return &UploadsHandler{dir: dir}
+}
+
+// errBlockedAddr — попытка соединиться с внутренним/непубличным адресом.
+var errBlockedAddr = errors.New("blocked non-public address")
+
+// isBlockedIP — true для адресов, к которым нельзя ходить из /uploads/from-url:
+// loopback, link-local (включая 169.254.169.254 — cloud metadata), приватные
+// сети (10/8, 172.16/12, 192.168/16, ULA fc00::/7), unspecified и multicast.
+func isBlockedIP(ip net.IP) bool {
+	return ip == nil ||
+		ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsPrivate()
+}
+
+// ssrfSafeDialContext резолвит хост и коннектится ТОЛЬКО к публичному IP.
+// Дилит уже проверенный IP напрямую — это закрывает окно DNS-rebinding
+// (между резолвом и коннектом адрес не подменить). Применяется к каждому
+// hop'у редиректа, т.к. http.Transport дёргает DialContext на каждый запрос.
+func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var d net.Dialer
+	for _, ipa := range ips {
+		if isBlockedIP(ipa.IP) {
+			continue
+		}
+		if conn, derr := d.DialContext(ctx, network, net.JoinHostPort(ipa.IP.String(), port)); derr == nil {
+			return conn, nil
+		}
+	}
+	return nil, errBlockedAddr
+}
+
+// ssrfSafeClient — http-клиент для загрузки картинок по внешней ссылке.
+// Блокирует внутренние адреса (см. isBlockedIP), ограничивает редиректы и
+// таймаут. TLS-проверка идёт по исходному хосту (SNI берётся из запроса).
+func ssrfSafeClient() *http.Client {
+	return &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{DialContext: ssrfSafeDialContext},
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			return nil
+		},
+	}
 }
 
 // allowedImageExt — единственный whitelisted набор. Расширение берётся
@@ -176,16 +236,19 @@ func (h *UploadsHandler) UploadFromURL(c *gin.Context) {
 		return
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(req.URL)
+	// SSRF-guard: клиент, который резолвит хост и отказывается коннектиться
+	// к loopback/link-local(metadata)/private адресам, плюс проверяет каждый
+	// редирект. Текст ошибки клиенту — generic, чтобы не отдавать карту
+	// внутренней сети по сообщениям.
+	resp, err := ssrfSafeClient().Get(req.URL)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "fetch failed: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "не удалось загрузить изображение по ссылке"})
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("remote returned %d", resp.StatusCode)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "не удалось загрузить изображение по ссылке"})
 		return
 	}
 
