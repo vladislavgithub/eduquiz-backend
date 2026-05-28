@@ -59,6 +59,7 @@ func (h *AdminHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	adm.GET("/stats", h.Stats)
 
 	adm.GET("/users", h.ListUsers)
+	adm.POST("/users", h.CreateUser)
 	adm.PATCH("/users/:uid", h.UpdateUser)
 	adm.POST("/users/:uid/reset-password", h.ResetPassword)
 	adm.DELETE("/users/:uid", h.DeleteUser)
@@ -211,6 +212,54 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		items = append(items, toAdminUserResp(u))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
+type adminCreateUserReq struct {
+	Email    string `json:"email"     binding:"required,email"`
+	FullName string `json:"full_name" binding:"required,min=2,max=200"`
+	Password string `json:"password"  binding:"required,min=8,max=72"`
+	Role     string `json:"role"      binding:"required,oneof=teacher student admin"`
+}
+
+// CreateUser обрабатывает POST /api/v1/admin/users.
+// Админ заводит учётку (teacher/student/admin) с заданным паролем.
+// В отличие от публичной регистрации: роль берётся как есть, проверка на
+// одноразовые домены не применяется, токены НЕ выпускаются.
+func (h *AdminHandler) CreateUser(c *gin.Context) {
+	var req adminCreateUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// Та же проверка силы пароля, что и в публичной регистрации.
+	if err := auth.ValidatePasswordStrength(req.Password); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash password"})
+		return
+	}
+	u := &repository.User{
+		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
+		PasswordHash: hash,
+		FullName:     strings.TrimSpace(req.FullName),
+		Role:         req.Role,
+	}
+	if err := h.users.Insert(c.Request.Context(), u); err != nil {
+		if errors.Is(err, repository.ErrEmailTaken) {
+			c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
+			return
+		}
+		h.log.Error("admin create user", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "create user"})
+		return
+	}
+	h.log.Info("admin_op", "admin_id", adminID(c), "op", "user.create", "target", u.ID, "role", u.Role)
+	c.JSON(http.StatusCreated, gin.H{"user": userResp{
+		ID: u.ID.String(), Email: u.Email, FullName: u.FullName, Role: u.Role,
+	}})
 }
 
 type adminUpdateUserReq struct {
