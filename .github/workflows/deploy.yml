@@ -32,8 +32,10 @@ jobs:
         env:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -se <<'EOF'
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "SMTP_USERNAME='$SMTP_USERNAME' SMTP_PASSWORD='$SMTP_PASSWORD' bash -se" <<'EOF'
           set -euo pipefail
           cd /opt/eduquiz
 
@@ -43,6 +45,20 @@ jobs:
 
           # Обновляем DOMAIN в .env.prod на реальный домен
           sed -i 's|^DOMAIN=.*|DOMAIN=eduquizz.ru|' /opt/eduquiz/.env.prod
+
+          # SMTP для писем восстановления пароля (идемпотентно: чистим и пишем заново).
+          # Значения приходят из GitHub Secrets через окружение ssh.
+          if [ -n "${SMTP_USERNAME:-}" ]; then
+            sed -i '/^SMTP_/d; /^APP_BASE_URL=/d' /opt/eduquiz/.env.prod
+            {
+              echo "SMTP_HOST=smtp.yandex.ru"
+              echo "SMTP_PORT=465"
+              echo "SMTP_USERNAME=${SMTP_USERNAME}"
+              echo "SMTP_PASSWORD=${SMTP_PASSWORD}"
+              echo "SMTP_FROM=${SMTP_USERNAME}"
+              echo "APP_BASE_URL=https://eduquizz.ru"
+            } >> /opt/eduquiz/.env.prod
+          fi
 
           docker build -t local/eduquiz-api .
           docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
