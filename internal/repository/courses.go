@@ -25,11 +25,15 @@ type Course struct {
 
 // QuestionBank — именованный набор вопросов внутри курса.
 type QuestionBank struct {
-	ID        uuid.UUID
-	CourseID  uuid.UUID
-	Title     string
-	Source    string // 'manual' | 'edu_gubkin' | 'moodle_xml' | 'gift'
-	CreatedAt time.Time
+	ID       uuid.UUID
+	CourseID uuid.UUID
+	Title    string
+	Source   string // 'manual' | 'edu_gubkin' | 'moodle_xml' | 'gift'
+	// OpenForStudy — преподаватель открыл банк для самостоятельного
+	// изучения (режим интервального повторения SM-2). Только при true
+	// студенту показывается правильный ответ в /me/sm2/due и /me/sm2/answer.
+	OpenForStudy bool
+	CreatedAt    time.Time
 }
 
 // CoursesRepo — репозиторий курсов.
@@ -112,12 +116,12 @@ func (r *CoursesRepo) InsertBank(ctx context.Context, b *QuestionBank) error {
 // GetBank возвращает банк по id или ErrNotFound.
 func (r *CoursesRepo) GetBank(ctx context.Context, id uuid.UUID) (*QuestionBank, error) {
 	const q = `
-        SELECT id, course_id, title, source, created_at
+        SELECT id, course_id, title, source, open_for_study, created_at
         FROM question_banks
         WHERE id = $1`
 	var b QuestionBank
 	err := r.pool.QueryRow(ctx, q, id).
-		Scan(&b.ID, &b.CourseID, &b.Title, &b.Source, &b.CreatedAt)
+		Scan(&b.ID, &b.CourseID, &b.Title, &b.Source, &b.OpenForStudy, &b.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -216,10 +220,16 @@ func (r *CoursesRepo) DeleteCourse(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// UpdateBank меняет title банка.
-func (r *CoursesRepo) UpdateBank(ctx context.Context, id uuid.UUID, title string) error {
-	const q = `UPDATE question_banks SET title = $2 WHERE id = $1`
-	tag, err := r.pool.Exec(ctx, q, id, title)
+// UpdateBank меняет title банка и опционально флаг open_for_study.
+// openForStudy — указатель: nil оставляет текущее значение без изменений
+// (через COALESCE), не-nil перезаписывает.
+func (r *CoursesRepo) UpdateBank(ctx context.Context, id uuid.UUID, title string, openForStudy *bool) error {
+	const q = `
+        UPDATE question_banks
+        SET title          = $2,
+            open_for_study = COALESCE($3, open_for_study)
+        WHERE id = $1`
+	tag, err := r.pool.Exec(ctx, q, id, title, openForStudy)
 	if err != nil {
 		return fmt.Errorf("update bank: %w", err)
 	}
@@ -245,7 +255,7 @@ func (r *CoursesRepo) DeleteBank(ctx context.Context, id uuid.UUID) error {
 // ListBanksByCourse возвращает все банки курса.
 func (r *CoursesRepo) ListBanksByCourse(ctx context.Context, courseID uuid.UUID) ([]QuestionBank, error) {
 	const q = `
-        SELECT id, course_id, title, source, created_at
+        SELECT id, course_id, title, source, open_for_study, created_at
         FROM question_banks
         WHERE course_id = $1
         ORDER BY created_at DESC`
@@ -258,7 +268,7 @@ func (r *CoursesRepo) ListBanksByCourse(ctx context.Context, courseID uuid.UUID)
 	out := make([]QuestionBank, 0, 8)
 	for rows.Next() {
 		var b QuestionBank
-		if err := rows.Scan(&b.ID, &b.CourseID, &b.Title, &b.Source, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.CourseID, &b.Title, &b.Source, &b.OpenForStudy, &b.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan bank: %w", err)
 		}
 		out = append(out, b)

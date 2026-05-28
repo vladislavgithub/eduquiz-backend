@@ -49,14 +49,19 @@ type courseResp struct {
 type bankReq struct {
 	Title  string `json:"title"  binding:"required,min=1,max=200"`
 	Source string `json:"source" binding:"omitempty,oneof=manual edu_gubkin moodle_xml gift"`
+	// OpenForStudy — указатель, чтобы отличить «не передано» (оставить как
+	// есть) от явного false. Только при true студенту раскрывается ответ
+	// в режиме SM-2.
+	OpenForStudy *bool `json:"open_for_study"`
 }
 
 type bankResp struct {
-	ID        string `json:"id"`
-	CourseID  string `json:"course_id"`
-	Title     string `json:"title"`
-	Source    string `json:"source"`
-	CreatedAt string `json:"created_at"`
+	ID           string `json:"id"`
+	CourseID     string `json:"course_id"`
+	Title        string `json:"title"`
+	Source       string `json:"source"`
+	OpenForStudy bool   `json:"open_for_study"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type questionReq struct {
@@ -582,7 +587,7 @@ func (h *CoursesHandler) UpdateBank(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.courses.UpdateBank(c.Request.Context(), bankID, req.Title); err != nil {
+	if err := h.courses.UpdateBank(c.Request.Context(), bankID, req.Title, req.OpenForStudy); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "bank not found"})
 			return
@@ -656,7 +661,8 @@ func toBankResp(b *repository.QuestionBank) bankResp {
 	return bankResp{
 		ID: b.ID.String(), CourseID: b.CourseID.String(),
 		Title: b.Title, Source: b.Source,
-		CreatedAt: b.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		OpenForStudy: b.OpenForStudy,
+		CreatedAt:    b.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 func toQuestionRespFull(q *repository.Question) questionResp {

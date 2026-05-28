@@ -60,6 +60,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Анти-бот: запрещаем регистрацию с одноразовых почтовых доменов.
+	// Проверяем ту же нормализованную строку, что и сохраняем в БД.
+	normalizedEmail := strings.ToLower(strings.TrimSpace(req.Email))
+	if auth.IsDisposableEmailDomain(normalizedEmail) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "регистрация с одноразовых почтовых адресов запрещена"})
+		return
+	}
+
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash password"})
@@ -67,7 +75,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	u := &repository.User{
-		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
+		Email:        normalizedEmail,
 		PasswordHash: hash,
 		FullName:     strings.TrimSpace(req.FullName),
 		// Игнорируем любую переданную клиентом роль: публичная регистрация

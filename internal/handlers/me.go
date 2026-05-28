@@ -81,6 +81,10 @@ type dueCardResp struct {
 	TimeLimitSec int             `json:"time_limit_sec"`
 	Difficulty   int             `json:"difficulty"`
 	DueDate      string          `json:"due_date"`
+	// Correct — ключ правильного ответа. Заполняется ТОЛЬКО для карточек
+	// из банков, открытых преподавателем для изучения (open_for_study).
+	// Иначе nil → опускается в JSON (omitempty), ответ не утекает.
+	Correct json.RawMessage `json:"correct,omitempty"`
 }
 
 type sm2AnswerReq struct {
@@ -90,10 +94,15 @@ type sm2AnswerReq struct {
 }
 
 type sm2AnswerResp struct {
-	Correct      *bool  `json:"correct,omitempty"`
-	Q            int    `json:"q"`
-	IntervalDays int    `json:"interval_days"`
-	NextDue      string `json:"next_due"`
+	Correct *bool `json:"correct,omitempty"`
+	// CorrectAnswer — ключ правильного ответа (raw, напр. ["b"]).
+	// Заполняется ТОЛЬКО когда банк карточки открыт для изучения
+	// (open_for_study). Ключ JSON отличается от булева `correct`, чтобы
+	// не ломать существующий контракт (booleancorrect — был ли студент прав).
+	CorrectAnswer json.RawMessage `json:"correct_answer,omitempty"`
+	Q             int             `json:"q"`
+	IntervalDays  int             `json:"interval_days"`
+	NextDue       string          `json:"next_due"`
 }
 
 // --- Endpoints ---
@@ -263,7 +272,7 @@ func (h *MeHandler) ListDue(c *gin.Context) {
 	}
 	out := make([]dueCardResp, 0, len(cards))
 	for _, q := range cards {
-		out = append(out, dueCardResp{
+		card := dueCardResp{
 			QuestionID:   q.QuestionID.String(),
 			BankID:       q.BankID.String(),
 			BankTitle:    q.BankTitle,
@@ -274,7 +283,12 @@ func (h *MeHandler) ListDue(c *gin.Context) {
 			TimeLimitSec: q.TimeLimitSec,
 			Difficulty:   q.Difficulty,
 			DueDate:      q.DueDate.Format("2006-01-02"),
-		})
+		}
+		// Раскрываем ключ ответа только если банк открыт для изучения.
+		if q.OpenForStudy && len(q.Correct) > 0 {
+			card.Correct = json.RawMessage(q.Correct)
+		}
+		out = append(out, card)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out, "count": len(out)})
 }
@@ -338,10 +352,17 @@ func (h *MeHandler) AnswerSM2(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, sm2AnswerResp{
+	resp := sm2AnswerResp{
 		Correct:      corrPtr,
 		Q:            qScore,
 		IntervalDays: upd.IntervalDays,
 		NextDue:      upd.DueDate.Format("2006-01-02"),
-	})
+	}
+	// Раскрываем ключ ответа только если банк вопроса открыт для изучения.
+	if bank, bErr := h.courses.GetBank(c.Request.Context(), q.BankID); bErr == nil &&
+		bank.OpenForStudy && len(q.Correct) > 0 {
+		resp.CorrectAnswer = json.RawMessage(q.Correct)
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

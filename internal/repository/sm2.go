@@ -35,6 +35,12 @@ type DueCard struct {
 	TimeLimitSec int
 	Difficulty   int
 	DueDate      time.Time
+	// Correct — ключ правильного ответа (raw JSON из questions.correct).
+	// Тянется из БД всегда, но хендлер отдаёт клиенту ТОЛЬКО когда
+	// OpenForStudy == true (банк открыт преподавателем для изучения).
+	Correct []byte
+	// OpenForStudy — флаг банка: открыт ли он для самостоятельного изучения.
+	OpenForStudy bool
 }
 
 type SM2Repo struct {
@@ -90,7 +96,7 @@ func (r *SM2Repo) ListDue(ctx context.Context, userID uuid.UUID, limit int) ([]D
 	const sql = `
 		SELECT s.question_id, q.bank_id, b.course_id, b.title,
 		       q.kind::text, q.text, q.options, q.time_limit_sec, q.difficulty,
-		       s.due_date
+		       s.due_date, q.correct, b.open_for_study
 		FROM sm2_states s
 		JOIN questions q       ON q.id = s.question_id
 		JOIN question_banks b  ON b.id = q.bank_id
@@ -109,7 +115,7 @@ func (r *SM2Repo) ListDue(ctx context.Context, userID uuid.UUID, limit int) ([]D
 		if err := rows.Scan(
 			&c.QuestionID, &c.BankID, &c.CourseID, &c.BankTitle,
 			&c.Kind, &c.Text, &c.Options, &c.TimeLimitSec, &c.Difficulty,
-			&c.DueDate,
+			&c.DueDate, &c.Correct, &c.OpenForStudy,
 		); err != nil {
 			return nil, err
 		}
