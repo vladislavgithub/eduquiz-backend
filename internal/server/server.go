@@ -101,8 +101,9 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	// register cost 11 ≈ 100 мс CPU, без лимита одна горутина положит api.
 	// 20 запросов в минуту с burst до 10 — нормально для людей,
 	// неприемлемо для perebor'а.
-	authLimiter := rateLimitMiddleware(20, 10)
-	authHandler.Routes(api, issuer, authLimiter)
+	authLimiter := rateLimitMiddleware(20, 10) // register/refresh: обычный per-IP
+	loginLimiter := loginRateLimitMiddleware() // login: штраф только за неудачу (401)
+	authHandler.Routes(api, issuer, authLimiter, loginLimiter)
 	coursesHandler.Routes(api, issuer)
 	roomsHandler.Routes(api, issuer)
 	meHandler.Routes(api, issuer)

@@ -10,6 +10,9 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -46,12 +49,10 @@ func newIPRateLimiter(perMin, maxBurst int) *ipRateLimiter {
 	return rl
 }
 
-// allow решает, пропустить ли запрос с этого IP. Атомарно списывает
-// токен, если он есть.
-func (rl *ipRateLimiter) allow(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	b, ok := rl.buckets[ip]
+// refillLocked возвращает (создавая при необходимости) бакет ключа и
+// доливает токены за прошедшее время. Вызывать под удержанным rl.mu.
+func (rl *ipRateLimiter) refillLocked(key string) *bucket {
+	b, ok := rl.buckets[key]
 	now := time.Now()
 	if !ok {
 		b = &bucket{
@@ -60,20 +61,47 @@ func (rl *ipRateLimiter) allow(ip string) bool {
 			maxBurst: float64(rl.maxBurst),
 			refill:   float64(rl.perMin) / 60.0,
 		}
-		rl.buckets[ip] = b
+		rl.buckets[key] = b
 	}
-	// Доливаем токены за прошедшее время.
 	elapsed := now.Sub(b.last).Seconds()
 	b.tokens += elapsed * b.refill
 	if b.tokens > b.maxBurst {
 		b.tokens = b.maxBurst
 	}
 	b.last = now
+	return b
+}
+
+// allow решает, пропустить ли запрос с этого ключа. Атомарно списывает
+// токен, если он есть.
+func (rl *ipRateLimiter) allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	b := rl.refillLocked(key)
 	if b.tokens < 1 {
 		return false
 	}
 	b.tokens--
 	return true
+}
+
+// available сообщает, есть ли у ключа хотя бы один токен, НЕ списывая его.
+func (rl *ipRateLimiter) available(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return rl.refillLocked(key).tokens >= 1
+}
+
+// penalize списывает один токен с ключа (штраф за неудачную попытку).
+func (rl *ipRateLimiter) penalize(key string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	b := rl.refillLocked(key)
+	if b.tokens >= 1 {
+		b.tokens--
+	} else {
+		b.tokens = 0
+	}
 }
 
 // gcLoop периодически чистит молчаливые IP, чтобы карта не росла.
@@ -108,6 +136,52 @@ func rateLimitMiddleware(perMin, maxBurst int) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// loginRateLimitMiddleware — лимитер именно для /auth/login.
+// Ключевое отличие от обычного per-IP лимита: токен СПИСЫВАЕТСЯ ТОЛЬКО при
+// неудачном входе (ответ 401). Успешный вход не тратит ничего — поэтому
+// целый класс с одного IP, у которого верные пароли, логинится свободно,
+// сколько бы студентов ни было. Брут одного аккаунта (поток 401) режется
+// по паре (IP+email); агрегатный поток неудач с одного IP ловит мягкий
+// потолок по IP (на случай перебора по множеству email с одного адреса).
+func loginRateLimitMiddleware() gin.HandlerFunc {
+	perAcct := newIPRateLimiter(10, 5) // на (IP|email): 5 burst, ~10/мин
+	perIP := newIPRateLimiter(100, 50) // потолок по IP: 50 burst, ~100/мин
+	return func(c *gin.Context) {
+		ip := clientIP(c)
+		acctKey := ip + "|" + peekLoginEmail(c)
+		// Проверяем ДО bcrypt — чтобы заблокированный брут не жёг CPU.
+		if !perAcct.available(acctKey) || !perIP.available(ip) {
+			c.Header("Retry-After", "60")
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "слишком много неудачных попыток входа, попробуйте через минуту",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+		// Штрафуем только за неудачный вход (неверные учётные данные).
+		if c.Writer.Status() == http.StatusUnauthorized {
+			perAcct.penalize(acctKey)
+			perIP.penalize(ip)
+		}
+	}
+}
+
+// peekLoginEmail читает email из JSON-тела запроса, не «съедая» его:
+// тело восстанавливается для последующего хендлера. При ошибке — "".
+func peekLoginEmail(c *gin.Context) string {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return ""
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body)) // вернуть тело хендлеру
+	var p struct {
+		Email string `json:"email"`
+	}
+	_ = json.Unmarshal(body, &p)
+	return strings.ToLower(strings.TrimSpace(p.Email))
 }
 
 // clientIP — извлекает IP клиента, учитывая X-Forwarded-For (Caddy)

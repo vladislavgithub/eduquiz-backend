@@ -208,18 +208,25 @@ func (h *AuthHandler) Me(c *gin.Context) {
 }
 
 // Routes регистрирует auth-эндпоинты под уже существующей группой /api/v1.
-// publicLimiter ставится на /register, /login, /refresh — защита от
-// brute-force и DoS bcrypt. Если nil — лимит не применяется (dev/test).
-func (h *AuthHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer, publicLimiter ...gin.HandlerFunc) {
+// registerLimiter ставится на /register и /refresh (обычный per-IP лимит).
+// loginLimiter ставится на /login — он штрафует только за НЕУДАЧНЫЙ вход,
+// чтобы класс с одного IP с верными паролями не упирался в 429.
+// Любой из лимитеров может быть nil (dev/test) — тогда не применяется.
+func (h *AuthHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer, registerLimiter, loginLimiter gin.HandlerFunc) {
 	a := api.Group("/auth")
-	pub := a.Group("")
-	for _, mw := range publicLimiter {
-		if mw != nil {
-			pub.Use(mw)
-		}
+
+	reg := a.Group("")
+	if registerLimiter != nil {
+		reg.Use(registerLimiter)
 	}
-	pub.POST("/register", h.Register)
-	pub.POST("/login", h.Login)
-	pub.POST("/refresh", h.Refresh)
+	reg.POST("/register", h.Register)
+	reg.POST("/refresh", h.Refresh)
+
+	lg := a.Group("")
+	if loginLimiter != nil {
+		lg.Use(loginLimiter)
+	}
+	lg.POST("/login", h.Login)
+
 	a.GET("/me", auth.RequireAuth(issuer), h.Me)
 }
