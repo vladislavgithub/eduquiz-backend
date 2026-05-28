@@ -67,6 +67,14 @@ services:
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
       ENV: ${ENV:-production}
+      # SMTP для писем восстановления пароля (значения из .env.prod).
+      # Пустые по умолчанию => mailer работает в no-op (без отправки).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      APP_BASE_URL: ${APP_BASE_URL:-https://eduquizz.ru}
     volumes:
       - uploads_data:/srv/uploads
     depends_on:
