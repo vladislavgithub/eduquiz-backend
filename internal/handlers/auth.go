@@ -28,8 +28,10 @@ type registerReq struct {
 	Email    string `json:"email"    binding:"required,email"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
 	FullName string `json:"full_name" binding:"required,min=2,max=200"`
-	// Роль ограничена teacher/student — admin создаётся только seed-скриптом.
-	Role string `json:"role" binding:"required,oneof=teacher student"`
+	// Публичная регистрация всегда создаёт student — преподаватели заводятся
+	// через админ-панель. Поле role принимается для совместимости со старыми
+	// клиентами, но игнорируется. omitempty — чтобы клиенты без role не падали.
+	Role string `json:"role" binding:"omitempty,oneof=teacher student"`
 }
 
 type tokenResp struct {
@@ -68,7 +70,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
 		PasswordHash: hash,
 		FullName:     strings.TrimSpace(req.FullName),
-		Role:         req.Role,
+		// Игнорируем любую переданную клиентом роль: публичная регистрация
+		// всегда создаёт student (защита от privilege escalation).
+		Role: "student",
 	}
 	if err := h.users.Insert(c.Request.Context(), u); err != nil {
 		if errors.Is(err, repository.ErrEmailTaken) {

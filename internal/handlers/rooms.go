@@ -353,7 +353,7 @@ func (h *RoomsHandler) StartRoom(c *gin.Context) {
 	}
 	h.bcast.Broadcast(room.ID, "question.activated", toQuestionResp(q))
 	h.bcast.Broadcast(room.ID, "room.state_changed", gin.H{"status": "active"})
-	c.JSON(http.StatusOK, gin.H{"current_question": toQuestionResp(q)})
+	c.JSON(http.StatusOK, gin.H{"current_question": toQuestionRespFull(q)})
 }
 
 // readMode извлекает поле mode из room.settings JSONB, fallback classic.
@@ -600,7 +600,7 @@ func (h *RoomsHandler) NextQuestion(c *gin.Context) {
 		return
 	}
 	h.bcast.Broadcast(room.ID, "question.activated", toQuestionResp(q))
-	c.JSON(http.StatusOK, gin.H{"current_question": toQuestionResp(q)})
+	c.JSON(http.StatusOK, gin.H{"current_question": toQuestionRespFull(q)})
 }
 
 // SubmitAnswer — POST /api/v1/rooms/:id/answers. Доступен любому

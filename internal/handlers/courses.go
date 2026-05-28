@@ -10,9 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/vladislavgithub/eduquiz-backend/internal/auth"
-	importpkg "github.com/vladislavgithub/eduquiz-backend/internal/services/import"
 	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
 	"github.com/vladislavgithub/eduquiz-backend/internal/services"
+	importpkg "github.com/vladislavgithub/eduquiz-backend/internal/services/import"
 )
 
 // CoursesHandler инкапсулирует зависимости course-эндпоинтов.
@@ -201,7 +201,7 @@ func (h *CoursesHandler) UpdateQuestion(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "reload question"})
 		return
 	}
-	c.JSON(http.StatusOK, toQuestionResp(full))
+	c.JSON(http.StatusOK, toQuestionRespFull(full))
 }
 
 // DeleteQuestion — DELETE /api/v1/questions/:id.
@@ -379,7 +379,7 @@ func (h *CoursesHandler) CreateQuestion(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create question"})
 		return
 	}
-	c.JSON(http.StatusCreated, toQuestionResp(q))
+	c.JSON(http.StatusCreated, toQuestionRespFull(q))
 }
 
 // ListQuestions — GET /api/v1/banks/:id/questions.
@@ -403,7 +403,7 @@ func (h *CoursesHandler) ListQuestions(c *gin.Context) {
 	}
 	out := make([]questionResp, 0, len(list))
 	for i := range list {
-		out = append(out, toQuestionResp(&list[i]))
+		out = append(out, toQuestionRespFull(&list[i]))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
@@ -659,11 +659,18 @@ func toBankResp(b *repository.QuestionBank) bankResp {
 		CreatedAt: b.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
-func toQuestionResp(q *repository.Question) questionResp {
+func toQuestionRespFull(q *repository.Question) questionResp {
 	return questionResp{
 		ID: q.ID.String(), BankID: q.BankID.String(),
 		Kind: q.Kind, Text: q.Text, Options: q.Options, Correct: q.Correct,
 		Difficulty: q.Difficulty, Topic: q.Topic,
 		TimeLimitSec: q.TimeLimitSec, Metadata: q.Metadata,
 	}
+}
+
+// toQuestionResp — публичный вид вопроса для участников: без правильного ответа.
+func toQuestionResp(q *repository.Question) questionResp {
+	r := toQuestionRespFull(q)
+	r.Correct = nil
+	return r
 }
