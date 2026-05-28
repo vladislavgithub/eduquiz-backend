@@ -220,13 +220,14 @@ func (r *CoursesRepo) DeleteCourse(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// UpdateBank меняет title банка и опционально флаг open_for_study.
-// openForStudy — указатель: nil оставляет текущее значение без изменений
-// (через COALESCE), не-nil перезаписывает.
-func (r *CoursesRepo) UpdateBank(ctx context.Context, id uuid.UUID, title string, openForStudy *bool) error {
+// UpdateBank частично обновляет банк. title и openForStudy — указатели:
+// nil оставляет текущее значение без изменений (через COALESCE), не-nil
+// перезаписывает. Так тумблер open_for_study не обязан присылать title,
+// а переименование не затирает флаг.
+func (r *CoursesRepo) UpdateBank(ctx context.Context, id uuid.UUID, title *string, openForStudy *bool) error {
 	const q = `
         UPDATE question_banks
-        SET title          = $2,
+        SET title          = COALESCE($2, title),
             open_for_study = COALESCE($3, open_for_study)
         WHERE id = $1`
 	tag, err := r.pool.Exec(ctx, q, id, title, openForStudy)

@@ -49,10 +49,15 @@ type courseResp struct {
 type bankReq struct {
 	Title  string `json:"title"  binding:"required,min=1,max=200"`
 	Source string `json:"source" binding:"omitempty,oneof=manual edu_gubkin moodle_xml gift"`
-	// OpenForStudy — указатель, чтобы отличить «не передано» (оставить как
-	// есть) от явного false. Только при true студенту раскрывается ответ
-	// в режиме SM-2.
-	OpenForStudy *bool `json:"open_for_study"`
+}
+
+// bankUpdateReq — частичное обновление банка (PATCH): все поля опциональны
+// (указатели). nil = «не передано, оставить как есть». Это позволяет, например,
+// переключить open_for_study, НЕ присылая title (иначе валидатор требовал бы
+// title и тумблер падал бы с 400).
+type bankUpdateReq struct {
+	Title        *string `json:"title"          binding:"omitempty,min=1,max=200"`
+	OpenForStudy *bool   `json:"open_for_study"`
 }
 
 type bankResp struct {
@@ -582,7 +587,7 @@ func (h *CoursesHandler) UpdateBank(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not your bank"})
 		return
 	}
-	var req bankReq
+	var req bankUpdateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
