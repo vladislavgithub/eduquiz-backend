@@ -12,6 +12,7 @@ import (
 	"github.com/vladislavgithub/eduquiz-backend/internal/auth"
 	"github.com/vladislavgithub/eduquiz-backend/internal/config"
 	"github.com/vladislavgithub/eduquiz-backend/internal/handlers"
+	"github.com/vladislavgithub/eduquiz-backend/internal/mailer"
 	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
 	"github.com/vladislavgithub/eduquiz-backend/internal/ws"
 )
@@ -61,15 +62,20 @@ func New(cfg *config.Config, deps Deps) *http.Server {
 	gamifRepo := repository.NewGamificationRepo(deps.DB)
 	sm2Repo := repository.NewSM2Repo(deps.DB)
 	analyticsRepo := repository.NewAnalyticsRepo(deps.DB)
+	passwordResetRepo := repository.NewPasswordResetRepo(deps.DB)
 
 	issuer := auth.NewIssuer(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
+
+	// Mailer для писем восстановления пароля. Без SMTP-кредов в конфиге
+	// отправка — no-op (см. mailer.SendPasswordReset), деплой безопасен.
+	mlr := mailer.New(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, slog.Default())
 
 	// WebSocket-хаб запускается фоновой горутиной; реализует Broadcaster.
 	hub := ws.NewHub(slog.Default())
 	go hub.Run()
 	wsHandler := ws.NewHandler(hub, issuer, roomsRepo, coursesRepo, slog.Default())
 
-	authHandler := handlers.NewAuthHandler(usersRepo, issuer)
+	authHandler := handlers.NewAuthHandler(usersRepo, issuer, passwordResetRepo, mlr, cfg.AppBaseURL, slog.Default())
 	coursesHandler := handlers.NewCoursesHandler(coursesRepo, questionsRepo, analyticsRepo)
 	roomsHandler := handlers.NewRoomsHandler(
 		roomsRepo, coursesRepo, questionsRepo, answersRepo, usersRepo,

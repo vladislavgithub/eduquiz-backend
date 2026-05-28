@@ -3,23 +3,50 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vladislavgithub/eduquiz-backend/internal/auth"
+	"github.com/vladislavgithub/eduquiz-backend/internal/mailer"
 	"github.com/vladislavgithub/eduquiz-backend/internal/repository"
 )
 
 // AuthHandler инкапсулирует зависимости auth-эндпоинтов.
 type AuthHandler struct {
-	users  *repository.UsersRepo
-	issuer *auth.Issuer
+	users      *repository.UsersRepo
+	issuer     *auth.Issuer
+	resets     *repository.PasswordResetRepo
+	mailer     *mailer.Mailer
+	appBaseURL string
+	log        *slog.Logger
 }
 
-func NewAuthHandler(users *repository.UsersRepo, issuer *auth.Issuer) *AuthHandler {
-	return &AuthHandler{users: users, issuer: issuer}
+func NewAuthHandler(
+	users *repository.UsersRepo,
+	issuer *auth.Issuer,
+	resets *repository.PasswordResetRepo,
+	mlr *mailer.Mailer,
+	appBaseURL string,
+	log *slog.Logger,
+) *AuthHandler {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &AuthHandler{
+		users:      users,
+		issuer:     issuer,
+		resets:     resets,
+		mailer:     mlr,
+		appBaseURL: appBaseURL,
+		log:        log,
+	}
 }
 
 // Register обрабатывает POST /api/v1/auth/register.
@@ -190,6 +217,111 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	})
 }
 
+// forgotPasswordResp — единый ответ /forgot-password. Намеренно generic,
+// не раскрывает, существует ли email (защита от user enumeration).
+const forgotPasswordMessage = "Если такой email зарегистрирован, мы отправили ссылку для сброса пароля"
+
+// ForgotPassword обрабатывает POST /api/v1/auth/forgot-password.
+// ВСЕГДА отвечает 200 с generic-сообщением — независимо от того, найден
+// пользователь или нет, и удалось ли отправить письмо.
+type forgotPasswordReq struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req forgotPasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	u, err := h.users.GetByEmail(ctx, email)
+	if err != nil {
+		// Нет такого пользователя (или иная ошибка чтения) — всё равно
+		// отвечаем успехом, чтобы не раскрывать существование email.
+		if !errors.Is(err, repository.ErrNotFound) {
+			h.log.Error("forgot-password: lookup user", "err", err)
+		}
+		c.JSON(http.StatusOK, gin.H{"message": forgotPasswordMessage})
+		return
+	}
+
+	// Генерируем криптостойкий токен: 32 байта → hex. В письмо уходит
+	// сырой токен, в БД — только его sha256-хеш.
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		h.log.Error("forgot-password: generate token", "err", err)
+		c.JSON(http.StatusOK, gin.H{"message": forgotPasswordMessage})
+		return
+	}
+	token := hex.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(sum[:])
+
+	if err := h.resets.Create(ctx, u.ID, tokenHash, time.Now().Add(30*time.Minute)); err != nil {
+		h.log.Error("forgot-password: store token", "err", err)
+		c.JSON(http.StatusOK, gin.H{"message": forgotPasswordMessage})
+		return
+	}
+
+	link := h.appBaseURL + "/reset-password?token=" + token
+	if err := h.mailer.SendPasswordReset(ctx, email, link); err != nil {
+		// Письмо не ушло — логируем, но клиенту всё равно 200.
+		h.log.Error("forgot-password: send email", "err", err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": forgotPasswordMessage})
+}
+
+// ResetPassword обрабатывает POST /api/v1/auth/reset-password.
+type resetPasswordReq struct {
+	Token       string `json:"token"        binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8,max=72"`
+}
+
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var req resetPasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+
+	sum := sha256.Sum256([]byte(req.Token))
+	tokenHash := hex.EncodeToString(sum[:])
+
+	userID, err := h.resets.ConsumeValid(ctx, tokenHash)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Ссылка недействительна или истекла"})
+			return
+		}
+		h.log.Error("reset-password: consume token", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	if err := auth.ValidatePasswordStrength(req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash password"})
+		return
+	}
+	if err := h.users.UpdatePassword(ctx, userID, hash); err != nil {
+		h.log.Error("reset-password: update password", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "update password"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Пароль изменён"})
+}
+
 // Me обрабатывает GET /api/v1/auth/me — возвращает профиль владельца токена.
 func (h *AuthHandler) Me(c *gin.Context) {
 	uid, ok := auth.UserIDFromContext(c)
@@ -221,6 +353,9 @@ func (h *AuthHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer, register
 	}
 	reg.POST("/register", h.Register)
 	reg.POST("/refresh", h.Refresh)
+	// Восстановление пароля — публичные ручки под per-IP лимитом reg.
+	reg.POST("/forgot-password", h.ForgotPassword)
+	reg.POST("/reset-password", h.ResetPassword)
 
 	lg := a.Group("")
 	if loginLimiter != nil {

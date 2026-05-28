@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -15,6 +16,18 @@ type Config struct {
 	JWTAccessTTL  time.Duration
 	JWTRefreshTTL time.Duration
 	Env           string // "development" / "production"
+
+	// SMTP-настройки для отправки писем (восстановление пароля).
+	// Пустой SMTPHost/SMTPUsername => отправка превращается в no-op
+	// (см. mailer.SendPasswordReset) — это позволяет безопасно
+	// деплоить код ДО того, как на сервере прописаны креды Yandex.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	// AppBaseURL — базовый URL фронтенда; из него строится ссылка сброса.
+	AppBaseURL string
 }
 
 func Load() (*Config, error) {
@@ -26,6 +39,13 @@ func Load() (*Config, error) {
 		JWTAccessTTL:  envDuration("JWT_ACCESS_TTL", 15*time.Minute),
 		JWTRefreshTTL: envDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
 		Env:           env("ENV", "development"),
+
+		SMTPHost:     env("SMTP_HOST", ""),
+		SMTPPort:     envInt("SMTP_PORT", 465),
+		SMTPUsername: env("SMTP_USERNAME", ""),
+		SMTPPassword: env("SMTP_PASSWORD", ""),
+		SMTPFrom:     env("SMTP_FROM", ""),
+		AppBaseURL:   env("APP_BASE_URL", "https://eduquizz.ru"),
 	}
 
 	if cfg.Env == "production" && cfg.JWTSecret == "" {
@@ -48,6 +68,15 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		}
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
 	}
 	return fallback
