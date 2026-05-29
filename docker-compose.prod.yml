@@ -99,6 +99,7 @@ services:
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./web:/srv/web:ro          # Flutter web bundle (см. docs/DEPLOY.md)
+      - ./deploy/liza-site:/srv/liza:ro  # статический сайт liza-vladya.ru (отдельный домен)
       - uploads_data:/srv/uploads:ro
       - caddy_data:/data
       - caddy_config:/config

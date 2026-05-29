@@ -61,3 +61,25 @@ eduquizz.ru {
 		format console
 	}
 }
+
+# Отдельный статический сайт-приглашение на своём домене. Полностью
+# независим от eduquizz.ru: свой блок, свой сертификат (Let's Encrypt),
+# свой каталог /srv/liza. На работу eduquizz никак не влияет.
+liza-vladya.ru, www.liza-vladya.ru {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	root * /srv/liza
+	file_server
+
+	log {
+		output stdout
+		format console
+	}
+}
