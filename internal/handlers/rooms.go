@@ -1022,16 +1022,26 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 		h.bcast.SendTo(roomID, uid, "my.finished", gin.H{
 			"correct": corrPtr, "awarded_xp": xp,
 		})
-		// Если все участники finished — переводим комнату в finished.
+		// Auto-finish: подсчёт активных (не покинувших) и
+		// финишировавших. Quizlet-Live стиль — после 3-х финишёров
+		// (топ-3 подиум) ждать остальных бесполезно. Если активных
+		// меньше 3 — ждём всех (защита от ранней остановки малых сессий).
 		all, _ := h.rooms.ListParticipants(c.Request.Context(), roomID)
-		allDone := true
+		activeCount := 0
+		finishedCount := 0
 		for _, p := range all {
-			if p.FinishedAtSession == nil {
-				allDone = false
-				break
+			if p.LeftAt != nil {
+				continue
+			}
+			activeCount++
+			if p.FinishedAtSession != nil {
+				finishedCount++
 			}
 		}
-		if allDone && len(all) > 0 {
+		shouldFinish := activeCount > 0 &&
+			((activeCount >= 3 && finishedCount >= 3) ||
+				(activeCount < 3 && finishedCount == activeCount))
+		if shouldFinish {
 			_ = h.rooms.SetStatus(c.Request.Context(), roomID, "active", "finished")
 			h.bcast.Broadcast(roomID, "room.state_changed", gin.H{"status": "finished"})
 		}
