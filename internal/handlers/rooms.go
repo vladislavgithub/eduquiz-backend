@@ -1229,6 +1229,7 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 		CurrentQuestionIdx int    `json:"current_question_idx"`
 		IsFinished         bool   `json:"is_finished"`
 		ResetCount         int    `json:"reset_count"`
+		TimeToFinishMs     *int64 `json:"time_to_finish_ms,omitempty"`
 	}
 	out := make([]row, 0, len(board))
 	for _, e := range board {
@@ -1242,6 +1243,7 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 			CurrentQuestionIdx: e.CurrentQuestionIdx,
 			IsFinished:         e.IsFinished,
 			ResetCount:         e.ResetCount,
+			TimeToFinishMs:     e.TimeToFinishMs,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
