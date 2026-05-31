@@ -1221,9 +1221,19 @@ func (h *RoomsHandler) SubmitMyAnswer(c *gin.Context) {
 				finishedCount++
 			}
 		}
-		shouldFinish := activeCount > 0 &&
-			((activeCount >= 3 && finishedCount >= 3) ||
-				(activeCount < 3 && finishedCount == activeCount))
+		// race: Quizlet-Live стиль — после 3-х финишёров (топ-3 подиум)
+		//       ждать остальных бесполезно, гонка решена. <3 активных
+		//       — ждём всех (защита от ранней остановки).
+		// timer и другие solo-режимы: тест должен пройти КАЖДЫЙ; иначе
+		//       аналитика и оценка группы обрываются. Ждём всех.
+		var shouldFinish bool
+		if mode == "race" {
+			shouldFinish = activeCount > 0 &&
+				((activeCount >= 3 && finishedCount >= 3) ||
+					(activeCount < 3 && finishedCount == activeCount))
+		} else {
+			shouldFinish = activeCount > 0 && finishedCount == activeCount
+		}
 		if shouldFinish {
 			_ = h.rooms.SetStatus(c.Request.Context(), roomID, "active", "finished")
 			h.bcast.Broadcast(roomID, "room.state_changed", gin.H{"status": "finished"})
