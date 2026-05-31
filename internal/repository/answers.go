@@ -186,6 +186,38 @@ func (r *AnswersRepo) ListByParticipant(ctx context.Context, roomID, participant
 	return out, rows.Err()
 }
 
+// PsychometricRow — сырая (participant, question, is_correct)-тройка для
+// классической теории тестов. Race-mode: только текущие attempts
+// (сброшенные DELETED).
+type PsychometricRow struct {
+	ParticipantID uuid.UUID
+	QuestionID    uuid.UUID
+	IsCorrect     *bool
+}
+
+// PsychometricsRaw — возвращает все ответы комнаты для CTT-агрегации
+// на стороне handler (α Кронбаха, p, r_pb).
+func (r *AnswersRepo) PsychometricsRaw(ctx context.Context, roomID uuid.UUID) ([]PsychometricRow, error) {
+	const sql = `
+        SELECT participant_id, question_id, is_correct
+        FROM answers
+        WHERE room_id = $1`
+	rows, err := r.pool.Query(ctx, sql, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("psychometrics raw: %w", err)
+	}
+	defer rows.Close()
+	out := make([]PsychometricRow, 0, 64)
+	for rows.Next() {
+		var p PsychometricRow
+		if err := rows.Scan(&p.ParticipantID, &p.QuestionID, &p.IsCorrect); err != nil {
+			return nil, fmt.Errorf("scan psychometric: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // LeaderboardEntry — строка таблицы лидеров по сумме XP в комнате.
 type LeaderboardEntry struct {
 	ParticipantID      uuid.UUID

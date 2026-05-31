@@ -16,6 +16,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"math/rand"
 	"net/http"
 	"time"
@@ -378,6 +379,164 @@ func (h *RoomsHandler) leaveBeaconHandler(issuer *auth.Issuer) gin.HandlerFunc {
 		})
 		c.Status(http.StatusNoContent)
 	}
+}
+
+// Psychometrics — GET /api/v1/rooms/:id/psychometrics.
+// Возвращает классическую теорию тестов (CTT) для активной сессии:
+// - per-question: индекс трудности p, точечно-бисериальная корреляция r_pb
+// - overall: α Кронбаха (KR-20 для бинарных), средняя трудность.
+//
+// p = sum(correct on Q) / count(attempts on Q)        ∈ [0, 1]
+// r_pb = (M_correct - M_incorrect)/SD_total * sqrt(p*(1-p))
+// α = K/(K-1) * (1 - sum(p_i*(1-p_i)) / var(total_scores))
+//
+// В race-режиме часть промахов УДАЛЕНА (race-soft-repeat), поэтому
+// статистика отражает только текущую попытку каждого студента —
+// в комментарии помечаем 'incomplete_for_race=true'.
+func (h *RoomsHandler) Psychometrics(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	room, err := h.rooms.GetByID(c.Request.Context(), roomID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+		return
+	}
+	raw, qerr := h.answers.PsychometricsRaw(c.Request.Context(), roomID)
+	if qerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch answers"})
+		return
+	}
+	matrix := map[uuid.UUID]map[uuid.UUID]bool{}
+	for _, r := range raw {
+		if r.IsCorrect == nil {
+			continue
+		}
+		if _, ok := matrix[r.ParticipantID]; !ok {
+			matrix[r.ParticipantID] = map[uuid.UUID]bool{}
+		}
+		matrix[r.ParticipantID][r.QuestionID] = *r.IsCorrect
+	}
+
+	// Список вопросов из room.question_order для устойчивого порядка.
+	qIDs := room.QuestionOrder
+
+	// totalScores: per participant — сумма правильных по ВСЕМ вопросам
+	type pStats struct {
+		score    int
+		answered int
+	}
+	pStat := map[uuid.UUID]*pStats{}
+	for pid, qs := range matrix {
+		s := &pStats{}
+		for _, ok := range qs {
+			s.answered++
+			if ok {
+				s.score++
+			}
+		}
+		pStat[pid] = s
+	}
+	// SD общего балла.
+	var totalScores []float64
+	for _, s := range pStat {
+		totalScores = append(totalScores, float64(s.score))
+	}
+	meanTotal, sdTotal := meanSD(totalScores)
+
+	// Per-question.
+	type qOut struct {
+		QuestionID     string   `json:"question_id"`
+		Attempts       int      `json:"attempts"`
+		Correct        int      `json:"correct"`
+		Difficulty     *float64 `json:"difficulty"`     // p
+		Discrimination *float64 `json:"discrimination"` // r_pb
+	}
+	qOuts := make([]qOut, 0, len(qIDs))
+	var diffSum float64
+	var diffCount int
+	var pqSum float64
+	for _, qid := range qIDs {
+		var attempts, correct int
+		var corrTotals, incTotals []float64
+		for pid, ans := range matrix {
+			if v, ok := ans[qid]; ok {
+				attempts++
+				if v {
+					correct++
+					corrTotals = append(corrTotals, float64(pStat[pid].score))
+				} else {
+					incTotals = append(incTotals, float64(pStat[pid].score))
+				}
+			}
+		}
+		out := qOut{
+			QuestionID: qid.String(),
+			Attempts:   attempts,
+			Correct:    correct,
+		}
+		if attempts > 0 {
+			p := float64(correct) / float64(attempts)
+			out.Difficulty = &p
+			diffSum += p
+			diffCount++
+			pqSum += p * (1 - p)
+			// r_pb если есть и правильные и неправильные и sd>0
+			if len(corrTotals) > 0 && len(incTotals) > 0 && sdTotal > 0 {
+				mc, _ := meanSD(corrTotals)
+				mi, _ := meanSD(incTotals)
+				rpb := (mc - mi) / sdTotal * math.Sqrt(p*(1-p))
+				out.Discrimination = &rpb
+			}
+		}
+		qOuts = append(qOuts, out)
+	}
+
+	// Cronbach α (KR-20 для бинарных).
+	var alpha *float64
+	K := len(qIDs)
+	if K > 1 && sdTotal > 0 {
+		varTotal := sdTotal * sdTotal
+		if varTotal > 0 {
+			a := float64(K) / float64(K-1) * (1 - pqSum/varTotal)
+			alpha = &a
+		}
+	}
+	var meanDiff *float64
+	if diffCount > 0 {
+		m := diffSum / float64(diffCount)
+		meanDiff = &m
+	}
+	_ = meanTotal // не используется в ответе
+
+	c.JSON(http.StatusOK, gin.H{
+		"alpha_cronbach":      alpha,
+		"mean_difficulty":     meanDiff,
+		"participants_count":  len(matrix),
+		"questions_count":     K,
+		"questions":           qOuts,
+		"incomplete_for_race": readMode(room.Settings) == "race",
+	})
+}
+
+// meanSD считает среднее и (популяционную) sd.
+func meanSD(xs []float64) (mean, sd float64) {
+	if len(xs) == 0 {
+		return 0, 0
+	}
+	var sum float64
+	for _, x := range xs {
+		sum += x
+	}
+	mean = sum / float64(len(xs))
+	var sq float64
+	for _, x := range xs {
+		d := x - mean
+		sq += d * d
+	}
+	sd = math.Sqrt(sq / float64(len(xs)))
+	return
 }
 
 // AppendQuestion — POST /api/v1/rooms/:id/questions.
@@ -1138,6 +1297,7 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher.POST("", h.CreateRoom)
 	teacher.POST("/:id/start", h.StartRoom)
 	teacher.POST("/:id/questions", h.AppendQuestion)
+	teacher.GET("/:id/psychometrics", h.Psychometrics)
 	teacher.POST("/:id/review", h.ReviewQuestion)
 	teacher.POST("/:id/next", h.NextQuestion)
 	teacher.POST("/:id/finish", h.FinishRoom)
