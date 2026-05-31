@@ -409,6 +409,14 @@ func (h *RoomsHandler) Psychometrics(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch answers"})
 		return
 	}
+	// Загружаем тексты вопросов одним запросом — нужны для текстовых
+	// рекомендаций («Проблемные вопросы: ...»).
+	qTexts := map[uuid.UUID]string{}
+	if bankQs, berr := h.questions.ListByBank(c.Request.Context(), room.BankID); berr == nil {
+		for _, q := range bankQs {
+			qTexts[q.ID] = q.Text
+		}
+	}
 	matrix := map[uuid.UUID]map[uuid.UUID]bool{}
 	for _, r := range raw {
 		if r.IsCorrect == nil {
@@ -449,6 +457,8 @@ func (h *RoomsHandler) Psychometrics(c *gin.Context) {
 	// Per-question.
 	type qOut struct {
 		QuestionID     string   `json:"question_id"`
+		Number         int      `json:"number"` // 1-based порядок в room.question_order
+		Text           string   `json:"text"`   // полная формулировка
 		Attempts       int      `json:"attempts"`
 		Correct        int      `json:"correct"`
 		Difficulty     *float64 `json:"difficulty"`     // p
@@ -458,7 +468,7 @@ func (h *RoomsHandler) Psychometrics(c *gin.Context) {
 	var diffSum float64
 	var diffCount int
 	var pqSum float64
-	for _, qid := range qIDs {
+	for idxQ, qid := range qIDs {
 		var attempts, correct int
 		var corrTotals, incTotals []float64
 		for pid, ans := range matrix {
@@ -474,6 +484,8 @@ func (h *RoomsHandler) Psychometrics(c *gin.Context) {
 		}
 		out := qOut{
 			QuestionID: qid.String(),
+			Number:     idxQ + 1,
+			Text:       qTexts[qid],
 			Attempts:   attempts,
 			Correct:    correct,
 		}
