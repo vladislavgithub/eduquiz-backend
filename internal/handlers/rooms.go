@@ -380,6 +380,59 @@ func (h *RoomsHandler) leaveBeaconHandler(issuer *auth.Issuer) gin.HandlerFunc {
 	}
 }
 
+// AppendQuestion — POST /api/v1/rooms/:id/questions.
+// Препод добавляет вопрос в активную сессию: создаёт его в текущем
+// банке комнаты и добавляет в конец room.question_order. Студенты,
+// которые ещё не дошли до конца, увидят новый вопрос в своём
+// продвижении. Доступно только владельцу комнаты.
+func (h *RoomsHandler) AppendQuestion(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	room, err := h.rooms.GetByID(c.Request.Context(), roomID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+		return
+	}
+	if room.Status == "finished" {
+		c.JSON(http.StatusGone, gin.H{"error": "room finished"})
+		return
+	}
+	var req questionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	q := &repository.Question{
+		BankID:       room.BankID,
+		Kind:         req.Kind,
+		Text:         req.Text,
+		Options:      req.Options,
+		Correct:      req.Correct,
+		Difficulty:   req.Difficulty,
+		Topic:        req.Topic,
+		TimeLimitSec: req.TimeLimitSec,
+		Metadata:     req.Metadata,
+	}
+	if err := h.questions.Insert(c.Request.Context(), q); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "create question"})
+		return
+	}
+	if err := h.rooms.AppendQuestionToOrder(c.Request.Context(), roomID, q.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "append to room"})
+		return
+	}
+	h.bcast.Broadcast(roomID, "room.question_appended", gin.H{
+		"question_id": q.ID.String(),
+		"new_total":   len(room.QuestionOrder) + 1,
+	})
+	c.JSON(http.StatusCreated, gin.H{
+		"question_id": q.ID.String(),
+		"new_total":   len(room.QuestionOrder) + 1,
+	})
+}
+
 // StartRoom — POST /api/v1/rooms/:id/start. Активирует первый вопрос.
 func (h *RoomsHandler) StartRoom(c *gin.Context) {
 	roomID, ok := h.requireRoomOwnership(c)
@@ -1072,6 +1125,7 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher := authed.Group("/rooms", auth.RequireRole("teacher", "admin"))
 	teacher.POST("", h.CreateRoom)
 	teacher.POST("/:id/start", h.StartRoom)
+	teacher.POST("/:id/questions", h.AppendQuestion)
 	teacher.POST("/:id/review", h.ReviewQuestion)
 	teacher.POST("/:id/next", h.NextQuestion)
 	teacher.POST("/:id/finish", h.FinishRoom)

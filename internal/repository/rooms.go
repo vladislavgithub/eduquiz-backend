@@ -443,6 +443,24 @@ func (r *RoomsRepo) ResetParticipant(ctx context.Context, participantID uuid.UUI
 	return &p, nil
 }
 
+// AppendQuestionToOrder добавляет вопрос в конец room.question_order.
+// Используется для live-добавления вопроса в активную сессию.
+func (r *RoomsRepo) AppendQuestionToOrder(
+	ctx context.Context,
+	roomID uuid.UUID,
+	questionID uuid.UUID,
+) error {
+	const sql = `
+        UPDATE rooms
+        SET question_order = array_append(question_order, $2)
+        WHERE id = $1`
+	_, err := r.pool.Exec(ctx, sql, roomID, questionID)
+	if err != nil {
+		return fmt.Errorf("append question to order: %w", err)
+	}
+	return nil
+}
+
 // LeaveParticipant помечает участника покинувшим комнату (left_at=NOW).
 // Запись не удаляется — историю ответов сохраняем. Идемпотентно:
 // повторный вызов на уже-покинувшего безопасен.
