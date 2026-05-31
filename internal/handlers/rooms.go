@@ -1066,6 +1066,7 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 		TotalXP            int    `json:"total_xp"`
 		Correct            int    `json:"correct"`
 		Total              int    `json:"total"`
+		Attempts           int    `json:"attempts"`
 		CurrentQuestionIdx int    `json:"current_question_idx"`
 		IsFinished         bool   `json:"is_finished"`
 		ResetCount         int    `json:"reset_count"`
@@ -1078,6 +1079,7 @@ func (h *RoomsHandler) Leaderboard(c *gin.Context) {
 			TotalXP:            e.TotalXP,
 			Correct:            e.Correct,
 			Total:              e.Total,
+			Attempts:           e.Attempts,
 			CurrentQuestionIdx: e.CurrentQuestionIdx,
 			IsFinished:         e.IsFinished,
 			ResetCount:         e.ResetCount,

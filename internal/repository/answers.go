@@ -194,6 +194,7 @@ type LeaderboardEntry struct {
 	TotalXP            int
 	Correct            int
 	Total              int
+	Attempts           int  // суммарное число попыток (включая сброшенные в race)
 	CurrentQuestionIdx int  // в timer/race: на каком вопросе сейчас (для race-bar)
 	IsFinished         bool // прошёл ли всю сессию (solo-режимы)
 	ResetCount         int  // race-режим: сколько раз сбрасывался прогресс
@@ -206,6 +207,7 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
                COALESCE(SUM(a.awarded_xp), 0)::int                                AS xp,
                COALESCE(SUM(CASE WHEN a.is_correct THEN 1 ELSE 0 END), 0)::int    AS correct,
                COALESCE(COUNT(a.id), 0)::int                                      AS total,
+               COALESCE(COUNT(a.id), 0)::int + p.reset_count                      AS attempts,
                p.current_question_idx,
                (p.finished_at_session IS NOT NULL)                                AS finished,
                p.reset_count
@@ -227,7 +229,7 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
 		var e LeaderboardEntry
 		if err := rows.Scan(
 			&e.ParticipantID, &e.UserID, &e.Nickname,
-			&e.TotalXP, &e.Correct, &e.Total,
+			&e.TotalXP, &e.Correct, &e.Total, &e.Attempts,
 			&e.CurrentQuestionIdx, &e.IsFinished, &e.ResetCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan leaderboard: %w", err)
