@@ -212,6 +212,7 @@ func (r *AnswersRepo) Leaderboard(ctx context.Context, roomID uuid.UUID) ([]Lead
         FROM participants p
         LEFT JOIN answers a ON a.participant_id = p.id
         WHERE p.room_id = $1
+          AND p.left_at IS NULL
         GROUP BY p.id, p.user_id, p.nickname, p.current_question_idx,
                  p.finished_at_session, p.joined_at, p.reset_count
         ORDER BY xp DESC, p.joined_at ASC`

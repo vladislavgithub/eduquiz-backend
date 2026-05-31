@@ -276,6 +276,16 @@ func (h *RoomsHandler) JoinRoom(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "find existing participant"})
 				return
 			}
+			// Если студент раньше покинул комнату (left_at) и теперь
+			// возвращается — очистим метку и оповестим как «снова в комнате».
+			wasGone := existing.LeftAt != nil
+			if wasGone {
+				_ = h.rooms.RejoinParticipant(c.Request.Context(), existing.ID)
+				h.bcast.Broadcast(room.ID, "participant.joined", gin.H{
+					"participant_id": existing.ID.String(),
+					"nickname":       existing.Nickname,
+				})
+			}
 			c.JSON(http.StatusOK, joinRoomResp{
 				RoomID: room.ID.String(), ParticipantID: existing.ID.String(),
 				Nickname: existing.Nickname,
@@ -298,6 +308,34 @@ func (h *RoomsHandler) JoinRoom(c *gin.Context) {
 	c.JSON(http.StatusOK, joinRoomResp{
 		RoomID: room.ID.String(), ParticipantID: p.ID.String(), Nickname: p.Nickname,
 	})
+}
+
+// LeaveRoom — POST /api/v1/rooms/:id/leave. Студент покидает комнату.
+// Помечает participant.left_at=NOW, шлёт всем WS-событие participant.left.
+// Идемпотентно: повторный вызов на уже-покинувшего безопасен (204).
+// Сам участник в БД не удаляется — историю ответов сохраняем для аналитики.
+func (h *RoomsHandler) LeaveRoom(c *gin.Context) {
+	uid, _ := auth.UserIDFromContext(c)
+	roomID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room id"})
+		return
+	}
+	p, err := h.rooms.FindParticipant(c.Request.Context(), roomID, uid)
+	if err != nil {
+		// Не участник — нечего покидать, всё равно отвечаем 204.
+		c.Status(http.StatusNoContent)
+		return
+	}
+	if err := h.rooms.LeaveParticipant(c.Request.Context(), p.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "leave room"})
+		return
+	}
+	h.bcast.Broadcast(roomID, "participant.left", gin.H{
+		"participant_id": p.ID.String(),
+		"nickname":       p.Nickname,
+	})
+	c.Status(http.StatusNoContent)
 }
 
 // StartRoom — POST /api/v1/rooms/:id/start. Активирует первый вопрос.
@@ -979,6 +1017,7 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	r.GET("/:id", h.GetRoom)
 	r.GET("/:id/leaderboard", h.Leaderboard)
 	r.POST("/join", h.JoinRoom)
+	r.POST("/:id/leave", h.LeaveRoom)
 	r.POST("/:id/answers", h.SubmitAnswer)
 	// Solo-режимы (timer/race) — per-student endpoints.
 	r.GET("/:id/my/state", h.MyState)

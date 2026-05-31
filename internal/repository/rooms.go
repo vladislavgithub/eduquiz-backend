@@ -443,6 +443,29 @@ func (r *RoomsRepo) ResetParticipant(ctx context.Context, participantID uuid.UUI
 	return &p, nil
 }
 
+// LeaveParticipant помечает участника покинувшим комнату (left_at=NOW).
+// Запись не удаляется — историю ответов сохраняем. Идемпотентно:
+// повторный вызов на уже-покинувшего безопасен.
+func (r *RoomsRepo) LeaveParticipant(ctx context.Context, participantID uuid.UUID) error {
+	const sql = `UPDATE participants SET left_at = NOW() WHERE id = $1 AND left_at IS NULL`
+	_, err := r.pool.Exec(ctx, sql, participantID)
+	if err != nil {
+		return fmt.Errorf("leave participant: %w", err)
+	}
+	return nil
+}
+
+// RejoinParticipant очищает left_at — если ушедший студент вернулся.
+// Вызывается из JoinRoom при ErrAlreadyJoined.
+func (r *RoomsRepo) RejoinParticipant(ctx context.Context, participantID uuid.UUID) error {
+	const sql = `UPDATE participants SET left_at = NULL WHERE id = $1`
+	_, err := r.pool.Exec(ctx, sql, participantID)
+	if err != nil {
+		return fmt.Errorf("rejoin participant: %w", err)
+	}
+	return nil
+}
+
 // newRoomCode возвращает строку из 6 десятичных цифр '000000'..'999999'.
 // Используется crypto/rand, чтобы код было сложно угадать.
 func newRoomCode() (string, error) {
