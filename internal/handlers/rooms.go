@@ -493,14 +493,25 @@ func (h *RoomsHandler) Psychometrics(c *gin.Context) {
 		qOuts = append(qOuts, out)
 	}
 
-	// Cronbach α (KR-20 для бинарных).
+	// Cronbach α (KR-20 для бинарных). Считаем только когда у нас
+	// есть данные по >=3 вопросам — иначе формула даёт мусор (на 1-2
+	// отвеченных вопросах α=0.0 интерпретируется как 'плохой банк',
+	// хотя на деле просто мало данных). diffCount = число вопросов
+	// с хотя бы одной попыткой.
 	var alpha *float64
 	K := len(qIDs)
-	if K > 1 && sdTotal > 0 {
+	if diffCount >= 3 && K > 1 && sdTotal > 0 {
 		varTotal := sdTotal * sdTotal
 		if varTotal > 0 {
-			a := float64(K) / float64(K-1) * (1 - pqSum/varTotal)
-			alpha = &a
+			// Используем effectiveK = diffCount, чтобы α не размывалась
+			// «пустыми» вопросами с p=0.
+			a := float64(diffCount) /
+				float64(diffCount-1) * (1 - pqSum/varTotal)
+			// Отрицательная α бессмысленна (хуже случайной согласованности)
+			// — обнуляем в null, чтобы UI показал 'мало данных'.
+			if a > 0 {
+				alpha = &a
+			}
 		}
 	}
 	var meanDiff *float64
