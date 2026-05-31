@@ -338,6 +338,48 @@ func (h *RoomsHandler) LeaveRoom(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// leaveBeaconHandler — публичный POST /api/v1/rooms/:id/leave-beacon.
+// Принимает токен в query (?t=<jwt>) потому что navigator.sendBeacon
+// не поддерживает кастомные заголовки. Используется фронтом на pagehide
+// чтобы при закрытии вкладки уход дошёл до бэка.
+// Безопасность: токен короткоживущий, эндпоинт идемпотентен и не даёт
+// делать ничего кроме «пометить себя ушедшим». На любом сбое — 204
+// (silent ignore, чтобы не палить наличие/отсутствие комнаты или участника).
+func (h *RoomsHandler) leaveBeaconHandler(issuer *auth.Issuer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokQ := c.Query("t")
+		if tokQ == "" {
+			c.Status(http.StatusNoContent)
+			return
+		}
+		claims, err := issuer.Parse(tokQ)
+		if err != nil {
+			c.Status(http.StatusNoContent)
+			return
+		}
+		uid := claims.UserID
+		roomID, err := uuid.Parse(c.Param("id"))
+		if err != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		p, ferr := h.rooms.FindParticipant(c.Request.Context(), roomID, uid)
+		if ferr != nil {
+			c.Status(http.StatusNoContent)
+			return
+		}
+		if lerr := h.rooms.LeaveParticipant(c.Request.Context(), p.ID); lerr != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		h.bcast.Broadcast(roomID, "participant.left", gin.H{
+			"participant_id": p.ID.String(),
+			"nickname":       p.Nickname,
+		})
+		c.Status(http.StatusNoContent)
+	}
+}
+
 // StartRoom — POST /api/v1/rooms/:id/start. Активирует первый вопрос.
 func (h *RoomsHandler) StartRoom(c *gin.Context) {
 	roomID, ok := h.requireRoomOwnership(c)
@@ -1011,6 +1053,10 @@ func (h *RoomsHandler) requireRoomOwnership(c *gin.Context) (uuid.UUID, bool) {
 // /rooms/join и /rooms/:id/answers требуют только аутентификации (любая роль).
 // Создание/управление — только teacher.
 func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
+	// Публичный beacon-эндпоинт для leave-on-tab-close (sendBeacon)
+	// читает токен из ?t= вместо Authorization-заголовка.
+	api.POST("/rooms/:id/leave-beacon", h.leaveBeaconHandler(issuer))
+
 	authed := api.Group("", auth.RequireAuth(issuer))
 
 	r := authed.Group("/rooms")
