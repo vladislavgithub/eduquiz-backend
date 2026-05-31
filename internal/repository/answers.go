@@ -129,6 +129,42 @@ func (r *AnswersRepo) DeleteAnswer(ctx context.Context, id uuid.UUID) error {
 
 // CountForQuestion возвращает количество ответов на текущий вопрос
 // (для отображения «X из Y участников ответили» в реальном времени).
+// BreakdownRow — один ответ участника на вопрос (для review-фазы):
+// nickname + raw JSON значение (опция, число, текст).
+type BreakdownRow struct {
+	Nickname string
+	Value    []byte
+}
+
+// BreakdownForQuestion возвращает все ответы участников на вопрос
+// в комнате (для показа в review-фазе host'у). Источник истины
+// против ws-потерянных событий.
+func (r *AnswersRepo) BreakdownForQuestion(
+	ctx context.Context,
+	roomID, questionID uuid.UUID,
+) ([]BreakdownRow, error) {
+	const sql = `
+        SELECT p.nickname, a.value
+        FROM answers a
+        JOIN participants p ON p.id = a.participant_id
+        WHERE a.room_id = $1 AND a.question_id = $2
+        ORDER BY a.created_at ASC`
+	rows, err := r.pool.Query(ctx, sql, roomID, questionID)
+	if err != nil {
+		return nil, fmt.Errorf("breakdown for question: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BreakdownRow, 0, 16)
+	for rows.Next() {
+		var b BreakdownRow
+		if err := rows.Scan(&b.Nickname, &b.Value); err != nil {
+			return nil, fmt.Errorf("scan breakdown: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func (r *AnswersRepo) CountForQuestion(ctx context.Context, roomID, questionID uuid.UUID) (int, error) {
 	const sql = `
         SELECT COUNT(*)

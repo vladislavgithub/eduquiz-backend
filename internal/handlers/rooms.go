@@ -16,6 +16,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"net/http"
@@ -1316,6 +1317,69 @@ func (h *RoomsHandler) Routes(api *gin.RouterGroup, issuer *auth.Issuer) {
 	teacher.POST("/:id/finish", h.FinishRoom)
 	teacher.POST("/:id/restart", h.RestartRoom)
 	teacher.GET("/:id/participants/:pid/answers", h.ParticipantAnswers)
+	teacher.GET("/:id/questions/:qid/breakdown", h.QuestionBreakdown)
+}
+
+// QuestionBreakdown — GET /api/v1/rooms/:id/questions/:qid/breakdown.
+// Возвращает per-option распределение голосов + free-answers для
+// показа в review-фазе. Источник истины: БД, не WS — чтобы избежать
+// расхождений при потере WS-событий (классическая беда live-сессий).
+func (h *RoomsHandler) QuestionBreakdown(c *gin.Context) {
+	roomID, ok := h.requireRoomOwnership(c)
+	if !ok {
+		return
+	}
+	qid, err := uuid.Parse(c.Param("qid"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid question id"})
+		return
+	}
+	rows, err := h.answers.BreakdownForQuestion(c.Request.Context(), roomID, qid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "breakdown"})
+		return
+	}
+	q, qerr := h.questions.GetByID(c.Request.Context(), qid)
+	if qerr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+		return
+	}
+	isFreeText := q.Kind == "open_text" || q.Kind == "qna" || q.Kind == "rating"
+	votersByOption := map[string][]string{}
+	freeAnswers := make([]map[string]string, 0)
+	for _, r := range rows {
+		var raw any
+		_ = json.Unmarshal(r.Value, &raw)
+		switch v := raw.(type) {
+		case string:
+			if isFreeText {
+				freeAnswers = append(freeAnswers, map[string]string{
+					"nickname": r.Nickname, "value": v,
+				})
+			} else {
+				votersByOption[v] = append(votersByOption[v], r.Nickname)
+			}
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					votersByOption[s] = append(votersByOption[s], r.Nickname)
+				}
+			}
+		case float64, bool:
+			freeAnswers = append(freeAnswers, map[string]string{
+				"nickname": r.Nickname,
+				"value":    fmt.Sprintf("%v", v),
+			})
+		default:
+			// nil / unknown
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"question_id":      qid.String(),
+		"total":            len(rows),
+		"voters_by_option": votersByOption,
+		"free_answers":     freeAnswers,
+	})
 }
 
 // ParticipantAnswers — GET /api/v1/rooms/:id/participants/:pid/answers.
