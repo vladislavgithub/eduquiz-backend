@@ -61799,7 +61799,7 @@ $2(a,b){return a+b},
 $S:117}
 A.aJt.prototype={
 $0(){var s,r,q=this.a,p=q.e
-if(p.ga6(p))return"\u043d\u0438\u043a\u0442\u043e \u043d\u0435 \u0432\u0438\u0441\u0435\u043b"
+if(p.ga6(p))return"\u043d\u0438\u043a\u0442\u043e \u043d\u0435 \u0437\u0430\u0432\u0438\u0441\u0430\u043b"
 p=p.gfV(p)
 s=p.eS(p)
 B.b.en(s,new A.aJp())
